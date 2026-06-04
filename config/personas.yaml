@@ -1,0 +1,264 @@
+# config/personas.yaml
+# Generative root for all synthetic data modalities.
+# Seven consumer decision-making archetypes derived from MouseLab/process-tracing literature.
+# All float fields are distribution parameters, not deterministic values.
+# Calibration targets: Payne, Bettman & Johnson (1993).
+
+archetypes:
+
+  price_lex:
+    label: "Price Lexicographic"
+    strategy:
+      primary_strategy: lexicographic
+      inspection_depth: shallow
+      first_attribute: price
+      rejection_threshold_pct: 0.35
+      p_reinspect: 0.05
+      p_strategy_lapse: 0.08
+      time_pressure_multiplier: 0.50
+    transactions:
+      price_sensitivity: 0.85
+      brand_loyalty: 0.25
+      purchase_frequency_per_month: 3.5
+      basket_size_mean: 2
+      channel_mix:
+        online: 0.60
+        in_store: 0.40
+      price_variance_tolerance: 0.10
+    psychographic:
+      involvement_score: 0.55
+      maximiser_score: 0.40
+      risk_tolerance: 0.30
+      price_consciousness: HIGH
+      openness_to_new: 0.35
+    narrative:
+      age_range: [30, 45]
+      household_type: family_with_children
+      category_relationship: habitual buyer
+      decision_style_description: >
+        Scans prices across all options first and immediately rejects anything
+        above their personal threshold; rarely revisits attributes once price
+        has eliminated a candidate.
+      price_attitude: price-first
+      narrative_length_words: 300
+
+  quality_lex:
+    label: "Quality Seeker"
+    strategy:
+      primary_strategy: lexicographic
+      inspection_depth: shallow
+      first_attribute: quality
+      rejection_threshold_pct: 0.40
+      p_reinspect: 0.08
+      p_strategy_lapse: 0.07
+      time_pressure_multiplier: 0.55
+    transactions:
+      price_sensitivity: 0.25
+      brand_loyalty: 0.60
+      purchase_frequency_per_month: 2.0
+      basket_size_mean: 1
+      channel_mix:
+        online: 0.50
+        in_store: 0.50
+      price_variance_tolerance: 0.30
+    psychographic:
+      involvement_score: 0.70
+      maximiser_score: 0.55
+      risk_tolerance: 0.40
+      price_consciousness: LOW
+      openness_to_new: 0.50
+    narrative:
+      age_range: [28, 42]
+      household_type: couple
+      category_relationship: occasional shopper
+      decision_style_description: >
+        Inspects quality ratings and reviews first; price is largely irrelevant
+        as long as the product meets their quality threshold.
+      price_attitude: quality-over-price
+      narrative_length_words: 300
+
+  compensatory:
+    label: "Compensatory Thorough"
+    strategy:
+      primary_strategy: compensatory
+      inspection_depth: deep
+      attribute_weights:
+        price: 0.35
+        quality: 0.30
+        brand: 0.20
+        other: 0.15
+      p_reinspect: 0.30
+      p_strategy_lapse: 0.05
+      time_pressure_multiplier: 0.65
+    transactions:
+      price_sensitivity: 0.45
+      brand_loyalty: 0.50
+      purchase_frequency_per_month: 2.5
+      basket_size_mean: 2
+      channel_mix:
+        online: 0.65
+        in_store: 0.35
+      price_variance_tolerance: 0.25
+    psychographic:
+      involvement_score: 0.80
+      maximiser_score: 0.75
+      risk_tolerance: 0.55
+      price_consciousness: MEDIUM
+      openness_to_new: 0.60
+    narrative:
+      age_range: [32, 50]
+      household_type: couple
+      category_relationship: deliberate researcher
+      decision_style_description: >
+        Systematically inspects all attributes across all alternatives, trades
+        off strengths against weaknesses, and arrives at a holistic best-overall
+        choice; comfortable with long decision times.
+      price_attitude: value-seeker
+      narrative_length_words: 300
+
+  satisficer:
+    label: "Satisficer"
+    strategy:
+      primary_strategy: satisficing
+      inspection_depth: medium
+      aspiration_levels:
+        price: 0.60
+        quality: 0.50
+      p_reinspect: 0.12
+      p_strategy_lapse: 0.10
+      time_pressure_multiplier: 0.70
+    transactions:
+      price_sensitivity: 0.55
+      brand_loyalty: 0.40
+      purchase_frequency_per_month: 3.0
+      basket_size_mean: 2
+      channel_mix:
+        online: 0.55
+        in_store: 0.45
+      price_variance_tolerance: 0.20
+    psychographic:
+      involvement_score: 0.50
+      maximiser_score: 0.25
+      risk_tolerance: 0.45
+      price_consciousness: MEDIUM
+      openness_to_new: 0.45
+    narrative:
+      age_range: [25, 40]
+      household_type: single
+      category_relationship: occasional shopper
+      decision_style_description: >
+        Evaluates options sequentially and chooses the first one that clears
+        their minimum requirements on price and quality; does not continue
+        searching once a satisfactory option is found.
+      price_attitude: value-seeker
+      narrative_length_words: 300
+
+  brand_affect:
+    label: "Brand Heuristic"
+    strategy:
+      primary_strategy: affect_heuristic
+      inspection_depth: shallow
+      first_attribute: brand
+      rejection_threshold_pct: 0.50
+      p_reinspect: 0.06
+      p_strategy_lapse: 0.12
+      time_pressure_multiplier: 0.40
+    transactions:
+      price_sensitivity: 0.20
+      brand_loyalty: 0.85
+      purchase_frequency_per_month: 4.0
+      basket_size_mean: 2
+      channel_mix:
+        online: 0.45
+        in_store: 0.55
+      price_variance_tolerance: 0.35
+    psychographic:
+      involvement_score: 0.60
+      maximiser_score: 0.35
+      risk_tolerance: 0.20
+      price_consciousness: LOW
+      openness_to_new: 0.15
+    narrative:
+      age_range: [22, 38]
+      household_type: single
+      category_relationship: habitual buyer
+      decision_style_description: >
+        Goes straight to their trusted brand; affective response to familiar
+        labels drives choice without extensive attribute inspection.
+      price_attitude: brand-driven
+      narrative_length_words: 300
+
+  low_involve:
+    label: "Low Involvement"
+    strategy:
+      primary_strategy: random
+      inspection_depth: variable
+      p_reinspect: 0.08
+      p_strategy_lapse: 0.35
+      time_pressure_multiplier: 0.80
+    transactions:
+      price_sensitivity: 0.50
+      brand_loyalty: 0.30
+      purchase_frequency_per_month: 5.0
+      basket_size_mean: 3
+      channel_mix:
+        online: 0.70
+        in_store: 0.30
+      price_variance_tolerance: 0.40
+    psychographic:
+      involvement_score: 0.20
+      maximiser_score: 0.30
+      risk_tolerance: 0.60
+      price_consciousness: MEDIUM
+      openness_to_new: 0.55
+    narrative:
+      age_range: [20, 35]
+      household_type: single
+      category_relationship: reluctant purchaser
+      decision_style_description: >
+        Low engagement with the category; inspects cells without a consistent
+        pattern, relies on whatever is salient or familiar at the moment of
+        choice.
+      price_attitude: indifferent
+      narrative_length_words: 300
+
+  adaptive:
+    label: "Adaptive"
+    strategy:
+      primary_strategy: adaptive
+      inspection_depth: variable
+      attribute_weights:
+        price: 0.30
+        quality: 0.30
+        brand: 0.20
+        other: 0.20
+      aspiration_levels:
+        price: 0.55
+        quality: 0.45
+      p_reinspect: 0.18
+      p_strategy_lapse: 0.15
+      time_pressure_multiplier: 0.60
+    transactions:
+      price_sensitivity: 0.55
+      brand_loyalty: 0.45
+      purchase_frequency_per_month: 2.8
+      basket_size_mean: 2
+      channel_mix:
+        online: 0.60
+        in_store: 0.40
+      price_variance_tolerance: 0.22
+    psychographic:
+      involvement_score: 0.65
+      maximiser_score: 0.55
+      risk_tolerance: 0.50
+      price_consciousness: MEDIUM
+      openness_to_new: 0.65
+    narrative:
+      age_range: [27, 45]
+      household_type: couple
+      category_relationship: occasional shopper
+      decision_style_description: >
+        Shifts strategy depending on task complexity and perceived time pressure;
+        can be compensatory when stakes are high or satisficing when rushed.
+      price_attitude: context-dependent
+      narrative_length_words: 300
