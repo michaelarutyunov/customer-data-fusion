@@ -1,3 +1,90 @@
 {
-  "hooks": {}
+  "env": {
+    "MLFLOW_TRACKING_URI": "mlruns",
+    "PYTHONPATH": "${workspaceFolder}"
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -c 'if (.tool_name == \"Bash\" and (.tool_input.command | test(\"bd create\"))) then {\"hookSpecificOutput\": {\"hookEventName\": \"PostToolUse\", \"additionalContext\": \"bd create was just run. Now invoke the check-bd skill to audit the new beads for ambiguity, missing acceptance criteria, and deferred decisions.\"}} else empty end'",
+            "statusMessage": "Checking for bd create..."
+          }
+        ]
+      },
+      {
+        "matcher": "Bash(bd close:*)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run python .claude/scripts/drift_check.py"
+          }
+        ]
+      }
+    ]
+  },
+  "includeCoAuthoredBy": false,
+  "mcpServers": {
+    "serena": {
+      "args": [
+        "--from",
+        "git+https://github.com/oraios/serena",
+        "serena-mcp-server",
+        "--context",
+        "ide-assistant",
+        "--project",
+        "${workspaceFolder}"
+      ],
+      "command": "uvx"
+    }
+  },
+  "model": "claude-sonnet-4-6",
+  "permissions": {
+    "allow": [
+      "Bash(uv:*)",
+      "Bash(bd:*)",
+      "Bash(python:*)",
+      "Bash(pytest:*)",
+      "Bash(git:*)",
+      "Bash(ruff:*)",
+      "Bash(mypy:*)",
+      "Bash(mlflow:*)",
+      "Bash(jupyter:*)",
+      "Bash(find:*)",
+      "Bash(cat:*)",
+      "Bash(ls:*)",
+      "Bash(mkdir:*)",
+      "Bash(touch:*)",
+      "Bash(cp:*)",
+      "Bash(mv:*)",
+      "Read(.claude/skills/**)",
+      "Read(schemas/**)",
+      "Read(config/**)",
+      "Read(generator/**)",
+      "Read(encoders/**)",
+      "Read(fusion/**)",
+      "Read(evaluation/**)",
+      "Read(notebooks/**)",
+      "Write(generator/**)",
+      "Write(encoders/**)",
+      "Write(fusion/**)",
+      "Write(evaluation/**)",
+      "Write(schemas/**)",
+      "Write(config/**)",
+      "Write(notebooks/**)",
+      "Write(data/synthetic/**)",
+      "Write(data/calibration/**)"
+    ],
+    "deny": [
+      "Bash(curl:*)",
+      "Bash(wget:*)",
+      "Bash(pip:*)",
+      "Write(.env)",
+      "Write(.gitignore)",
+      "Write(pyproject.toml)"
+    ]
+  }
 }

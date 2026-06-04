@@ -227,3 +227,6 @@ mlruns/
 .dolt/
 *.db
 .beads-credential-key
+
+# Claude files
+.claude/
