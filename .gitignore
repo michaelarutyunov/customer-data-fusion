@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+data/synthetic/*
+!data/synthetic/.gitkeep
+data/calibration/*
+!data/calibration/.gitkeep
+mlruns/
+.env
