@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "customer_data_fusion",
+  "project_id": "112f701a-4223-4b19-912e-426db586c4d9"
+}

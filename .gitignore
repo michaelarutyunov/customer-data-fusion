@@ -222,3 +222,8 @@ data/calibration/*
 !data/calibration/.gitkeep
 mlruns/
 .env
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
