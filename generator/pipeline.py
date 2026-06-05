@@ -103,6 +103,7 @@ def run_pipeline(
         "narratives": open(output_dir / "narratives.jsonl", "w"),
     }
     counts: dict[str, int] = {k: 0 for k in handles}
+    counts["narrative_failures"] = 0
     n_validation_failures = 0
 
     try:
@@ -123,7 +124,18 @@ def run_pipeline(
             if skip_narratives:
                 narrative = None
             else:
-                narrative = generate_narrative(config, category=category)
+                try:
+                    narrative = generate_narrative(config, category=category)
+                except Exception as exc:
+                    log.warning(
+                        "pipeline.narrative_failed",
+                        participant_id=config.persona_id,
+                        archetype=archetype_id,
+                        participant_index=i,
+                        error=str(exc),
+                    )
+                    counts["narrative_failures"] += 1
+                    narrative = None
 
             if narrative is not None:
                 report = validate_participant(

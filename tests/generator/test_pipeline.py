@@ -105,6 +105,7 @@ class TestRunPipeline:
             "transactions",
             "psychographics",
             "narratives",
+            "narrative_failures",
         }
 
 
@@ -257,3 +258,80 @@ class TestDeterminism:
             assert stripped_a == stripped_b, (
                 f"{stem}.jsonl data differs between identical-seed runs"
             )
+
+
+# ---------------------------------------------------------------------------
+# Narrative resilience
+# ---------------------------------------------------------------------------
+
+
+class TestNarrativeResilience:
+    def test_pipeline_continues_when_narrative_raises(self, tmp_path: Path):
+        """A single narrative API failure must not abort the run."""
+        from unittest.mock import patch
+
+        with patch(
+            "generator.pipeline.generate_narrative",
+            side_effect=RuntimeError("API error"),
+        ):
+            counts = run_pipeline(n=3, output_dir=tmp_path)
+
+        # All non-narrative modalities must be complete
+        assert counts["psychographics"] == 3
+        assert counts["traces"] > 0
+        assert counts["transactions"] > 0
+        # No narratives written — every call failed
+        assert counts["narratives"] == 0
+
+    def test_partial_narrative_failure_writes_successful_ones(self, tmp_path: Path):
+        """Participants whose narrative succeeds must still be written."""
+        from unittest.mock import patch
+        from schemas.text import PersonaNarrative
+
+        call_count = 0
+
+        def flaky_generate(config, category="electronics"):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 2:
+                raise RuntimeError("transient API error")
+            return PersonaNarrative(
+                participant_id=config.persona_id,
+                persona_id=config.persona_id,
+                category=category,
+                text="word " * 280,
+                word_count=280,
+                model_id="deepseek-chat",
+                prompt_version="v1",
+            )
+
+        with patch("generator.pipeline.generate_narrative", side_effect=flaky_generate):
+            counts = run_pipeline(n=3, output_dir=tmp_path)
+
+        # 2 of 3 narratives succeeded
+        assert counts["narratives"] == 2
+        # Other modalities unaffected
+        assert counts["psychographics"] == 3
+
+    def test_narrative_failures_reported_in_counts(self, tmp_path: Path):
+        """counts dict must include narrative_failures key with failure count."""
+        from unittest.mock import patch
+
+        with patch(
+            "generator.pipeline.generate_narrative",
+            side_effect=RuntimeError("API error"),
+        ):
+            counts = run_pipeline(n=4, output_dir=tmp_path)
+
+        assert counts["narrative_failures"] == 4
+
+    def test_non_narrative_exception_still_propagates(self, tmp_path: Path):
+        """Only narrative errors are swallowed — other generator errors must crash."""
+        from unittest.mock import patch
+
+        with patch(
+            "generator.pipeline.generate_psychographic",
+            side_effect=RuntimeError("psych bug"),
+        ):
+            with pytest.raises(RuntimeError, match="psych bug"):
+                run_pipeline(n=2, output_dir=tmp_path, skip_narratives=True)
