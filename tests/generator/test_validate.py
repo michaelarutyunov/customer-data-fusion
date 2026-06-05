@@ -1,10 +1,17 @@
 """Unit tests for generator/validate.py."""
+
 from __future__ import annotations
 
 
 from schemas.persona import (
-    InspectionDepth, NarrativeParams, PersonaConfig, PriceConsciousness,
-    PsychographicParams, Strategy, StrategyParams, TransactionParams,
+    InspectionDepth,
+    NarrativeParams,
+    PersonaConfig,
+    PriceConsciousness,
+    PsychographicParams,
+    Strategy,
+    StrategyParams,
+    TransactionParams,
 )
 from schemas.psychographic import PsychographicVector
 from schemas.text import PersonaNarrative
@@ -17,8 +24,12 @@ from generator.validate import ValidationReport, validate_participant
 # Fixture helpers
 # ---------------------------------------------------------------------------
 
-def _make_config(persona_id: str, price_consciousness: PriceConsciousness = PriceConsciousness.HIGH,
-                 price_sensitivity: float = 0.85) -> PersonaConfig:
+
+def _make_config(
+    persona_id: str,
+    price_consciousness: PriceConsciousness = PriceConsciousness.HIGH,
+    price_sensitivity: float = 0.85,
+) -> PersonaConfig:
     return PersonaConfig(
         persona_id=persona_id,
         label=persona_id,
@@ -52,8 +63,9 @@ def _make_config(persona_id: str, price_consciousness: PriceConsciousness = Pric
     )
 
 
-def _make_psychographic(persona_id: str, price_consciousness: float = 0.85,
-                        brand_sensitivity: float = 0.25) -> PsychographicVector:
+def _make_psychographic(
+    persona_id: str, price_consciousness: float = 0.85, brand_sensitivity: float = 0.25
+) -> PsychographicVector:
     return PsychographicVector(
         participant_id=persona_id,
         persona_id=persona_id,
@@ -84,7 +96,9 @@ def _make_narrative(word_count: int = 300) -> PersonaNarrative:
     )
 
 
-def _make_transaction(price_paid: float = 0.20, brand_tier: str = "value") -> TransactionRecord:
+def _make_transaction(
+    price_paid: float = 0.20, brand_tier: str = "value"
+) -> TransactionRecord:
     return TransactionRecord(
         participant_id="p001",
         transaction_id="tx001",
@@ -101,7 +115,9 @@ def _make_transaction(price_paid: float = 0.20, brand_tier: str = "value") -> Tr
     )
 
 
-def _make_trial(persona_id: str = "price_lex", payne_index: float = -0.7) -> TrialRecord:
+def _make_trial(
+    persona_id: str = "price_lex", payne_index: float = -0.7
+) -> TrialRecord:
     return TrialRecord(
         participant_id=persona_id,
         trial_id="t001",
@@ -123,6 +139,7 @@ def _make_trial(persona_id: str = "price_lex", payne_index: float = -0.7) -> Tri
 # ---------------------------------------------------------------------------
 # ValidationReport
 # ---------------------------------------------------------------------------
+
 
 class TestValidationReport:
     def test_starts_passed(self):
@@ -148,6 +165,7 @@ class TestValidationReport:
 # Price consciousness check
 # ---------------------------------------------------------------------------
 
+
 class TestPriceConsciousnessCheck:
     def test_price_lex_passes_with_high_pc(self):
         config = _make_config("price_lex", PriceConsciousness.HIGH)
@@ -166,14 +184,18 @@ class TestPriceConsciousnessCheck:
         assert "price_consciousness" in checks
 
     def test_quality_lex_passes_with_low_pc(self):
-        config = _make_config("quality_lex", PriceConsciousness.LOW, price_sensitivity=0.25)
+        config = _make_config(
+            "quality_lex", PriceConsciousness.LOW, price_sensitivity=0.25
+        )
         psycho = _make_psychographic("quality_lex", price_consciousness=0.20)
         report = validate_participant(config, [], [], psycho, _make_narrative())
         checks = [f[0] for f in report.failures]
         assert "price_consciousness" not in checks
 
     def test_quality_lex_fails_when_pc_too_high(self):
-        config = _make_config("quality_lex", PriceConsciousness.LOW, price_sensitivity=0.25)
+        config = _make_config(
+            "quality_lex", PriceConsciousness.LOW, price_sensitivity=0.25
+        )
         psycho = _make_psychographic("quality_lex", price_consciousness=0.80)
         report = validate_participant(config, [], [], psycho, _make_narrative())
         checks = [f[0] for f in report.failures]
@@ -183,6 +205,7 @@ class TestPriceConsciousnessCheck:
 # ---------------------------------------------------------------------------
 # Brand sensitivity check
 # ---------------------------------------------------------------------------
+
 
 class TestBrandSensitivityCheck:
     def test_non_brand_affect_skips_check(self):
@@ -195,8 +218,12 @@ class TestBrandSensitivityCheck:
     def test_brand_affect_passes_with_high_bs(self):
         config = _make_config("brand_affect")
         psycho = _make_psychographic("brand_affect", brand_sensitivity=0.80)
-        transactions = [_make_transaction(brand_tier="premium")] * 8 + [_make_transaction(brand_tier="mid")] * 2
-        report = validate_participant(config, [], transactions, psycho, _make_narrative())
+        transactions = [_make_transaction(brand_tier="premium")] * 8 + [
+            _make_transaction(brand_tier="mid")
+        ] * 2
+        report = validate_participant(
+            config, [], transactions, psycho, _make_narrative()
+        )
         checks = [f[0] for f in report.failures]
         assert "brand_sensitivity" not in checks
 
@@ -217,7 +244,9 @@ class TestBrandSensitivityCheck:
             _make_transaction(brand_tier="value"),
             _make_transaction(brand_tier="own_label"),
         ]
-        report = validate_participant(config, [], transactions, psycho, _make_narrative())
+        report = validate_participant(
+            config, [], transactions, psycho, _make_narrative()
+        )
         checks = [f[0] for f in report.failures]
         assert "brand_tier_concentration" in checks
 
@@ -226,10 +255,14 @@ class TestBrandSensitivityCheck:
 # Narrative word count check
 # ---------------------------------------------------------------------------
 
+
 class TestNarrativeWordCount:
     def test_passes_within_range(self):
         report = validate_participant(
-            _make_config("price_lex"), [], [], _make_psychographic("price_lex"),
+            _make_config("price_lex"),
+            [],
+            [],
+            _make_psychographic("price_lex"),
             _make_narrative(word_count=300),
         )
         checks = [f[0] for f in report.failures]
@@ -237,7 +270,10 @@ class TestNarrativeWordCount:
 
     def test_fails_too_short(self):
         report = validate_participant(
-            _make_config("price_lex"), [], [], _make_psychographic("price_lex"),
+            _make_config("price_lex"),
+            [],
+            [],
+            _make_psychographic("price_lex"),
             _make_narrative(word_count=150),
         )
         checks = [f[0] for f in report.failures]
@@ -245,7 +281,10 @@ class TestNarrativeWordCount:
 
     def test_fails_too_long(self):
         report = validate_participant(
-            _make_config("price_lex"), [], [], _make_psychographic("price_lex"),
+            _make_config("price_lex"),
+            [],
+            [],
+            _make_psychographic("price_lex"),
             _make_narrative(word_count=500),
         )
         checks = [f[0] for f in report.failures]
@@ -256,12 +295,17 @@ class TestNarrativeWordCount:
 # Transaction price consistency check
 # ---------------------------------------------------------------------------
 
+
 class TestTransactionPriceConsistency:
     def test_high_sensitivity_low_price_passes(self):
         config = _make_config("price_lex", price_sensitivity=0.85)
         transactions = [_make_transaction(price_paid=0.20)] * 10
         report = validate_participant(
-            config, [], transactions, _make_psychographic("price_lex"), _make_narrative()
+            config,
+            [],
+            transactions,
+            _make_psychographic("price_lex"),
+            _make_narrative(),
         )
         checks = [f[0] for f in report.failures]
         assert "transaction_price_consistency" not in checks
@@ -270,7 +314,11 @@ class TestTransactionPriceConsistency:
         config = _make_config("price_lex", price_sensitivity=0.85)
         transactions = [_make_transaction(price_paid=0.80)] * 10
         report = validate_participant(
-            config, [], transactions, _make_psychographic("price_lex"), _make_narrative()
+            config,
+            [],
+            transactions,
+            _make_psychographic("price_lex"),
+            _make_narrative(),
         )
         checks = [f[0] for f in report.failures]
         assert "transaction_price_consistency" in checks
@@ -287,6 +335,7 @@ class TestTransactionPriceConsistency:
 # ---------------------------------------------------------------------------
 # Payne index range check
 # ---------------------------------------------------------------------------
+
 
 class TestPayneIndexRangeCheck:
     def test_price_lex_in_range_passes(self):
@@ -330,10 +379,15 @@ class TestPayneIndexRangeCheck:
 # Integration: all checks combined
 # ---------------------------------------------------------------------------
 
+
 class TestValidateParticipantIntegration:
     def test_well_configured_price_lex_passes_all(self):
-        config = _make_config("price_lex", PriceConsciousness.HIGH, price_sensitivity=0.85)
-        psycho = _make_psychographic("price_lex", price_consciousness=0.85, brand_sensitivity=0.25)
+        config = _make_config(
+            "price_lex", PriceConsciousness.HIGH, price_sensitivity=0.85
+        )
+        psycho = _make_psychographic(
+            "price_lex", price_consciousness=0.85, brand_sensitivity=0.25
+        )
         transactions = [_make_transaction(price_paid=0.15)] * 10
         trials = [_make_trial("price_lex", payne_index=-0.70)] * 10
         narrative = _make_narrative(word_count=300)

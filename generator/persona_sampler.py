@@ -44,7 +44,9 @@ def _load_yaml() -> dict:
     path = Path(os.environ.get("PERSONAS_YAML", str(_YAML_PATH)))
     with open(path) as f:
         data = yaml.safe_load(f)
-    log.info("personas_yaml_loaded", path=str(path), n_archetypes=len(data["archetypes"]))
+    log.info(
+        "personas_yaml_loaded", path=str(path), n_archetypes=len(data["archetypes"])
+    )
     return data
 
 
@@ -52,7 +54,9 @@ def list_archetype_ids() -> list[str]:
     return list(_load_yaml()["archetypes"].keys())
 
 
-def sample_persona(archetype_id: str, random_seed: Optional[int] = None) -> PersonaConfig:
+def sample_persona(
+    archetype_id: str, random_seed: Optional[int] = None
+) -> PersonaConfig:
     """
     Instantiate a PersonaConfig for one participant from the named archetype.
 
@@ -65,8 +69,7 @@ def sample_persona(archetype_id: str, random_seed: Optional[int] = None) -> Pers
     archetypes = data["archetypes"]
     if archetype_id not in archetypes:
         raise ValueError(
-            f"Unknown archetype '{archetype_id}'. "
-            f"Valid ids: {list(archetypes.keys())}"
+            f"Unknown archetype '{archetype_id}'. Valid ids: {list(archetypes.keys())}"
         )
 
     rng = np.random.default_rng(random_seed)
@@ -99,7 +102,10 @@ def sample_persona(archetype_id: str, random_seed: Optional[int] = None) -> Pers
 # Internal builders
 # ---------------------------------------------------------------------------
 
-def _noisy(rng: np.random.Generator, base: float, lo: float = 0.0, hi: float = 1.0) -> float:
+
+def _noisy(
+    rng: np.random.Generator, base: float, lo: float = 0.0, hi: float = 1.0
+) -> float:
     """Apply Gaussian noise to a base value, clipped to [lo, hi]."""
     std = _NOISE_SCALE * base if base > 0 else _NOISE_SCALE
     return float(np.clip(rng.normal(base, std), lo, hi))
@@ -111,13 +117,17 @@ def _build_strategy(raw: dict, rng: np.random.Generator) -> StrategyParams:
 
     attribute_weights: Optional[dict[str, float]] = None
     if "attribute_weights" in raw:
-        weights = {k: _noisy(rng, v, lo=0.01) for k, v in raw["attribute_weights"].items()}
+        weights = {
+            k: _noisy(rng, v, lo=0.01) for k, v in raw["attribute_weights"].items()
+        }
         total = sum(weights.values())
         attribute_weights = {k: v / total for k, v in weights.items()}
 
     aspiration_levels: Optional[dict[str, float]] = None
     if "aspiration_levels" in raw:
-        aspiration_levels = {k: _noisy(rng, v) for k, v in raw["aspiration_levels"].items()}
+        aspiration_levels = {
+            k: _noisy(rng, v) for k, v in raw["aspiration_levels"].items()
+        }
 
     return StrategyParams(
         primary_strategy=strategy,
@@ -132,20 +142,28 @@ def _build_strategy(raw: dict, rng: np.random.Generator) -> StrategyParams:
         aspiration_levels=aspiration_levels,
         p_reinspect=_noisy(rng, raw["p_reinspect"], lo=0.0, hi=1.0),
         p_strategy_lapse=_noisy(rng, raw["p_strategy_lapse"], lo=0.0, hi=1.0),
-        time_pressure_multiplier=_noisy(rng, raw["time_pressure_multiplier"], lo=0.1, hi=1.0),
+        time_pressure_multiplier=_noisy(
+            rng, raw["time_pressure_multiplier"], lo=0.1, hi=1.0
+        ),
     )
 
 
 def _build_transactions(raw: dict, rng: np.random.Generator) -> TransactionParams:
-    channel_mix_raw = {k: _noisy(rng, v, lo=0.01) for k, v in raw["channel_mix"].items()}
+    channel_mix_raw = {
+        k: _noisy(rng, v, lo=0.01) for k, v in raw["channel_mix"].items()
+    }
     total = sum(channel_mix_raw.values())
     channel_mix = {k: v / total for k, v in channel_mix_raw.items()}
 
     return TransactionParams(
         price_sensitivity=_noisy(rng, raw["price_sensitivity"]),
         brand_loyalty=_noisy(rng, raw["brand_loyalty"]),
-        purchase_frequency_per_month=_noisy(rng, raw["purchase_frequency_per_month"], lo=0.1, hi=30.0),
-        basket_size_mean=max(1, int(round(_noisy(rng, float(raw["basket_size_mean"]), lo=1.0, hi=20.0)))),
+        purchase_frequency_per_month=_noisy(
+            rng, raw["purchase_frequency_per_month"], lo=0.1, hi=30.0
+        ),
+        basket_size_mean=max(
+            1, int(round(_noisy(rng, float(raw["basket_size_mean"]), lo=1.0, hi=20.0)))
+        ),
         channel_mix=channel_mix,
         price_variance_tolerance=_noisy(rng, raw["price_variance_tolerance"]),
     )

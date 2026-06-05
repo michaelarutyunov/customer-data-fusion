@@ -20,7 +20,13 @@ from schemas.transaction import TransactionRecord, Channel, PurchaseType
 from schemas.text import PersonaNarrative
 from schemas.psychographic import PsychographicVector
 
+# Output dimension for all modality encoders — must match fusion meta-learner input.
+# Changing this requires retraining all encoders and the fusion layer.
+EMBEDDING_DIM: int = 128
+
 __all__ = [
+    # Encoder contract
+    "EMBEDDING_DIM",
     # Persona (generative root)
     "PersonaConfig",
     "StrategyParams",

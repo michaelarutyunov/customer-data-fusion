@@ -1,0 +1,13 @@
+# SHA-256 checksums for the canonical 1000-participant synthetic dataset
+# Generated: 2026-06-05
+# Command: uv run python -m generator.pipeline --n 1000 --seed 0 --skip-narratives
+# Narratives excluded (require LLM API key); narratives.jsonl is empty (0 bytes).
+#
+# To verify:
+#   sha256sum -c data/calibration/checksums_n1000_seed0.sha256
+#
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  data/synthetic/narratives.jsonl
+41866307b57551fc534977d0da194cce19512b6650fb725d362c58100e012a82  data/synthetic/psychographics.jsonl
+5b6a1ab8b1b5694fcc575328fc4548f8746e7a3c943a74f4169818fe1ee3f1c2  data/synthetic/traces.jsonl
+b4876e4630d0a25760e5540e89b4b5923ef85881bb8f31d51e922d0a5a0487f7  data/synthetic/transactions.jsonl
+011f6129b27d5ebe3bee06c1de71c3d78362e71e6ae6ea305a9dd5de0c6240ad  data/synthetic/trials.jsonl

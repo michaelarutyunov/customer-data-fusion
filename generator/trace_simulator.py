@@ -32,20 +32,20 @@ log = structlog.get_logger(__name__)
 # E[lognormal(mu, sigma)] = exp(mu + sigma^2/2)
 # With sigma=0.5: E = exp(mu + 0.125)
 _DWELL_MU: dict[str, float] = {
-    "price_lex":    6.75,
+    "price_lex": 6.75,
     "compensatory": 7.10,
     "brand_affect": 6.55,
-    "low_involve":  6.15,
-    "satisficer":   6.95,
+    "low_involve": 6.15,
+    "satisficer": 6.95,
 }
 _DWELL_MU_DEFAULT = 6.90
 _DWELL_SIGMA = 0.5
 
 # ── inspection-depth fraction targets ────────────────────────────────────────
 _DEPTH_FRACTION: dict[InspectionDepth, float] = {
-    InspectionDepth.SHALLOW:  0.225,
-    InspectionDepth.MEDIUM:   0.42,
-    InspectionDepth.DEEP:     0.72,
+    InspectionDepth.SHALLOW: 0.225,
+    InspectionDepth.MEDIUM: 0.42,
+    InspectionDepth.DEEP: 0.72,
     InspectionDepth.VARIABLE: 0.42,
 }
 
@@ -54,8 +54,8 @@ _DEPTH_FRACTION: dict[InspectionDepth, float] = {
 # for an archetype. Fatigue and time_pressure multipliers still apply on top.
 # Keys match config.persona_id values.
 _ARCHETYPE_DEPTH_FRACTION: dict[str, float] = {
-    "compensatory": 0.72,   # stays deep even under fatigue
-    "satisficer":   0.42,   # stays at medium; fatigue reduces to 0.30 not 0.225
+    "compensatory": 0.72,  # stays deep even under fatigue
+    "satisficer": 0.42,  # stays at medium; fatigue reduces to 0.30 not 0.225
     "brand_affect": 0.25,  # shallow-to-medium but enough events for reliable PI estimation
 }
 
@@ -66,7 +66,16 @@ _DEPTH_ORDER = [
     InspectionDepth.VARIABLE,
 ]
 
-_ATTRIBUTES = ["price", "brand", "quality", "warranty", "rating", "features", "availability", "design"]
+_ATTRIBUTES = [
+    "price",
+    "brand",
+    "quality",
+    "warranty",
+    "rating",
+    "features",
+    "availability",
+    "design",
+]
 _ALTERNATIVES = ["A", "B", "C", "D", "E", "F", "G"]
 
 
@@ -379,8 +388,14 @@ def simulate_session(
 
         # Generate raw (alt, attr) sequence
         raw_sequence = _generate_sequence(
-            rng, trial_strategy, alts, attrs, strategy_params,
-            effective_depth, time_pressure, persona_id=participant_id,
+            rng,
+            trial_strategy,
+            alts,
+            attrs,
+            strategy_params,
+            effective_depth,
+            time_pressure,
+            persona_id=participant_id,
         )
 
         # Build AcquisitionEvent objects

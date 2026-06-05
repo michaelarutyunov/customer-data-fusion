@@ -134,14 +134,17 @@ class TestCategoricalFieldValues:
 
 
 class TestDecisionStyleMapping:
-    @pytest.mark.parametrize("strategy,expected", [
-        (Strategy.LEXICOGRAPHIC, "analytical"),
-        (Strategy.COMPENSATORY, "analytical"),
-        (Strategy.SATISFICING, "dependent"),
-        (Strategy.AFFECT_HEURISTIC, "intuitive"),
-        (Strategy.RANDOM, "spontaneous"),
-        (Strategy.ADAPTIVE, "avoidant"),
-    ])
+    @pytest.mark.parametrize(
+        "strategy,expected",
+        [
+            (Strategy.LEXICOGRAPHIC, "analytical"),
+            (Strategy.COMPENSATORY, "analytical"),
+            (Strategy.SATISFICING, "dependent"),
+            (Strategy.AFFECT_HEURISTIC, "intuitive"),
+            (Strategy.RANDOM, "spontaneous"),
+            (Strategy.ADAPTIVE, "avoidant"),
+        ],
+    )
     def test_strategy_maps_correctly(self, strategy: Strategy, expected: str) -> None:
         config = _make_config(strategy=strategy)
         result = generate_psychographic(config)
@@ -256,15 +259,20 @@ class TestIdentityFields:
 
 
 class TestAgeBand:
-    @pytest.mark.parametrize("age_range,expected_band", [
-        ((18, 18), "18-24"),
-        ((25, 25), "25-34"),
-        ((35, 35), "35-44"),
-        ((45, 45), "45-54"),
-        ((55, 55), "55-64"),
-        ((65, 65), "65+"),
-    ])
-    def test_age_band_boundary(self, age_range: tuple[int, int], expected_band: str) -> None:
+    @pytest.mark.parametrize(
+        "age_range,expected_band",
+        [
+            ((18, 18), "18-24"),
+            ((25, 25), "25-34"),
+            ((35, 35), "35-44"),
+            ((45, 45), "45-54"),
+            ((55, 55), "55-64"),
+            ((65, 65), "65+"),
+        ],
+    )
+    def test_age_band_boundary(
+        self, age_range: tuple[int, int], expected_band: str
+    ) -> None:
         config = _make_config(age_range=age_range, random_seed=42)
         result = generate_psychographic(config)
         assert result.age_band == expected_band

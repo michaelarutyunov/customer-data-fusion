@@ -1,4 +1,5 @@
 """Unit tests for schemas/text.py and schemas/psychographic.py."""
+
 from __future__ import annotations
 
 import dataclasses
@@ -12,6 +13,7 @@ from schemas.psychographic import PsychographicVector
 # ---------------------------------------------------------------------------
 # PersonaNarrative
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def persona_narrative() -> PersonaNarrative:
@@ -75,6 +77,7 @@ class TestPersonaNarrative:
 # PsychographicVector
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def psychographic_vector() -> PsychographicVector:
     return PsychographicVector(
@@ -102,8 +105,12 @@ class TestPsychographicVector:
 
     def test_continuous_scores_in_range(self, psychographic_vector):
         for attr in (
-            "involvement_score", "maximiser_score", "risk_tolerance",
-            "price_consciousness", "brand_sensitivity", "openness_to_new",
+            "involvement_score",
+            "maximiser_score",
+            "risk_tolerance",
+            "price_consciousness",
+            "brand_sensitivity",
+            "openness_to_new",
         ):
             val = getattr(psychographic_vector, attr)
             assert 0.0 <= val <= 1.0, f"{attr}={val} out of [0,1]"
@@ -137,10 +144,13 @@ class TestPsychographicVector:
     def test_asdict_json_serialisable(self, psychographic_vector):
         json.dumps(dataclasses.asdict(psychographic_vector))
 
-    @pytest.mark.parametrize("persona_id,expected_max_below", [
-        ("satisficer", 0.40),
-        ("low_involve", 0.40),
-    ])
+    @pytest.mark.parametrize(
+        "persona_id,expected_max_below",
+        [
+            ("satisficer", 0.40),
+            ("low_involve", 0.40),
+        ],
+    )
     def test_satisficer_low_maximiser(self, persona_id, expected_max_below):
         vec = PsychographicVector(
             participant_id="p_test",

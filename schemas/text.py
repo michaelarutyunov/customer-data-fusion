@@ -23,12 +23,13 @@ class PersonaNarrative:
     embedding: populated after sentence-transformer inference; None at generation time.
     model_id: the LLM used for generation (for reproducibility auditing).
     """
+
     participant_id: str
     persona_id: str
     category: str
-    text: str                         # raw narrative text, 200–400 words
+    text: str  # raw narrative text, 200–400 words
     word_count: int
-    model_id: str                     # e.g. "deepseek-chat", "claude-sonnet-4-6"
-    prompt_version: str               # version tag of generation prompt template
-    embedding: Optional[list[float]] = None   # sentence-transformer output vector
+    model_id: str  # e.g. "deepseek-chat", "claude-sonnet-4-6"
+    prompt_version: str  # version tag of generation prompt template
+    embedding: Optional[list[float]] = None  # sentence-transformer output vector
     embedding_model_id: Optional[str] = None  # e.g. "all-MiniLM-L6-v2"

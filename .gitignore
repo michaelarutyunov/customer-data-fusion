@@ -220,6 +220,7 @@ data/synthetic/*
 !data/synthetic/.gitkeep
 data/calibration/*
 !data/calibration/.gitkeep
+!data/calibration/*.sha256
 mlruns/
 .env
 

@@ -45,6 +45,7 @@ _OUTPUT_DIR = Path("data/synthetic")
 
 def _to_json(obj: object) -> str:
     """Serialise a dataclass to a JSON line. Enum values use .value."""
+
     def _default(o: object) -> object:
         if isinstance(o, Enum):
             return o.value
@@ -95,11 +96,11 @@ def run_pipeline(
     active_archetypes = archetypes if archetypes else all_archetypes
 
     handles = {
-        "traces":         open(output_dir / "traces.jsonl", "w"),
-        "trials":         open(output_dir / "trials.jsonl", "w"),
-        "transactions":   open(output_dir / "transactions.jsonl", "w"),
+        "traces": open(output_dir / "traces.jsonl", "w"),
+        "trials": open(output_dir / "trials.jsonl", "w"),
+        "transactions": open(output_dir / "transactions.jsonl", "w"),
         "psychographics": open(output_dir / "psychographics.jsonl", "w"),
-        "narratives":     open(output_dir / "narratives.jsonl", "w"),
+        "narratives": open(output_dir / "narratives.jsonl", "w"),
     }
     counts: dict[str, int] = {k: 0 for k in handles}
     n_validation_failures = 0
@@ -111,8 +112,12 @@ def run_pipeline(
 
             config = sample_persona(archetype_id, random_seed=seed)
 
-            events, trials = simulate_session(config, category=category, n_trials=n_trials)
-            transactions = simulate_transactions(config, category=category, n_months=n_months)
+            events, trials = simulate_session(
+                config, category=category, n_trials=n_trials
+            )
+            transactions = simulate_transactions(
+                config, category=category, n_months=n_months
+            )
             psychographic = generate_psychographic(config, category=category)
 
             if skip_narratives:
@@ -121,7 +126,9 @@ def run_pipeline(
                 narrative = generate_narrative(config, category=category)
 
             if narrative is not None:
-                report = validate_participant(config, trials, transactions, psychographic, narrative)
+                report = validate_participant(
+                    config, trials, transactions, psychographic, narrative
+                )
                 if not report.passed:
                     n_validation_failures += 1
                     log.warning(
@@ -179,20 +186,25 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate CDT synthetic dataset")
     parser.add_argument("--n", type=int, required=True, help="Number of participants")
     parser.add_argument(
-        "--archetypes", nargs="+", default=None,
-        help="Archetype IDs to cycle over (default: all 7)"
+        "--archetypes",
+        nargs="+",
+        default=None,
+        help="Archetype IDs to cycle over (default: all 7)",
     )
     parser.add_argument("--category", default="electronics")
     parser.add_argument("--seed", type=int, default=0, help="Base random seed")
     parser.add_argument("--n-trials", type=int, default=20)
     parser.add_argument("--n-months", type=int, default=12)
     parser.add_argument(
-        "--output-dir", type=Path, default=_OUTPUT_DIR,
-        help="Output directory (default: data/synthetic/)"
+        "--output-dir",
+        type=Path,
+        default=_OUTPUT_DIR,
+        help="Output directory (default: data/synthetic/)",
     )
     parser.add_argument(
-        "--skip-narratives", action="store_true",
-        help="Skip LLM narrative generation (for fast dry-runs)"
+        "--skip-narratives",
+        action="store_true",
+        help="Skip LLM narrative generation (for fast dry-runs)",
     )
     return parser.parse_args(argv)
 

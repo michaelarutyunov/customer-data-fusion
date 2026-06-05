@@ -1,4 +1,5 @@
 """Unit tests for generator/persona_sampler.py."""
+
 from __future__ import annotations
 
 import pytest
@@ -17,8 +18,13 @@ from generator.persona_sampler import sample_persona, list_archetype_ids
 
 
 ALL_ARCHETYPES = [
-    "price_lex", "quality_lex", "compensatory",
-    "satisficer", "brand_affect", "low_involve", "adaptive",
+    "price_lex",
+    "quality_lex",
+    "compensatory",
+    "satisficer",
+    "brand_affect",
+    "low_involve",
+    "adaptive",
 ]
 
 
@@ -94,7 +100,9 @@ class TestStrategyFieldsPerArchetype:
 class TestTransactionFields:
     def test_channel_mix_sums_to_one(self):
         cfg = sample_persona("price_lex", random_seed=42)
-        assert sum(cfg.transactions.channel_mix.values()) == pytest.approx(1.0, abs=1e-9)
+        assert sum(cfg.transactions.channel_mix.values()) == pytest.approx(
+            1.0, abs=1e-9
+        )
 
     def test_basket_size_at_least_one(self):
         for seed in range(20):
@@ -124,7 +132,12 @@ class TestPsychographicFields:
     @pytest.mark.parametrize("archetype_id", ALL_ARCHETYPES)
     def test_scores_in_unit_range(self, archetype_id):
         cfg = sample_persona(archetype_id, random_seed=3)
-        for attr in ("involvement_score", "maximiser_score", "risk_tolerance", "openness_to_new"):
+        for attr in (
+            "involvement_score",
+            "maximiser_score",
+            "risk_tolerance",
+            "openness_to_new",
+        ):
             val = getattr(cfg.psychographic, attr)
             assert 0.0 <= val <= 1.0, f"{archetype_id}.{attr}={val} out of [0,1]"
 
@@ -149,7 +162,9 @@ class TestReproducibility:
         cfg1 = sample_persona("price_lex", random_seed=42)
         cfg2 = sample_persona("price_lex", random_seed=42)
         assert cfg1.strategy.p_reinspect == pytest.approx(cfg2.strategy.p_reinspect)
-        assert cfg1.transactions.price_sensitivity == pytest.approx(cfg2.transactions.price_sensitivity)
+        assert cfg1.transactions.price_sensitivity == pytest.approx(
+            cfg2.transactions.price_sensitivity
+        )
 
     def test_different_seeds_different_params(self):
         cfg1 = sample_persona("price_lex", random_seed=1)

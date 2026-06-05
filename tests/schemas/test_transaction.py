@@ -1,4 +1,5 @@
 """Unit tests for schemas/transaction.py."""
+
 from __future__ import annotations
 
 import dataclasses

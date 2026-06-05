@@ -36,7 +36,13 @@ _STRATEGY_TO_DECISION_STYLE: dict[Strategy, str] = {
 _AGE_BANDS = ["18-24", "25-34", "35-44", "45-54", "55-64", "65+"]
 _AGE_BAND_EDGES = [18, 25, 35, 45, 55, 65, 200]
 
-_EMPLOYMENT_STATUSES = ["full_time", "part_time", "self_employed", "not_employed", "retired"]
+_EMPLOYMENT_STATUSES = [
+    "full_time",
+    "part_time",
+    "self_employed",
+    "not_employed",
+    "retired",
+]
 _EMPLOYMENT_WEIGHTS = [0.5, 0.15, 0.15, 0.10, 0.10]
 
 
@@ -97,9 +103,7 @@ def generate_psychographic(
     age_band = _age_to_band(age)
 
     # Employment status: weighted sample
-    employment_status = str(
-        rng.choice(_EMPLOYMENT_STATUSES, p=_EMPLOYMENT_WEIGHTS)
-    )
+    employment_status = str(rng.choice(_EMPLOYMENT_STATUSES, p=_EMPLOYMENT_WEIGHTS))
 
     # Purchase frequency band
     freq = txn.purchase_frequency_per_month

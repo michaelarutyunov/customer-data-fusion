@@ -26,6 +26,7 @@ from generator.transaction_simulator import simulate_transactions
 # Shared fixture builders
 # ---------------------------------------------------------------------------
 
+
 def _make_config(
     persona_id: str,
     price_sensitivity: float,
@@ -74,48 +75,79 @@ def _make_config(
 # Persona fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def price_lex_config() -> PersonaConfig:
     """High price sensitivity (0.85) — buys cheap."""
-    return _make_config("price_lex", price_sensitivity=0.85, brand_loyalty=0.20, purchase_frequency_per_month=3.0)
+    return _make_config(
+        "price_lex",
+        price_sensitivity=0.85,
+        brand_loyalty=0.20,
+        purchase_frequency_per_month=3.0,
+    )
 
 
 @pytest.fixture
 def quality_lex_config() -> PersonaConfig:
     """Low price sensitivity (0.25) — buys premium."""
-    return _make_config("quality_lex", price_sensitivity=0.25, brand_loyalty=0.60, purchase_frequency_per_month=2.0)
+    return _make_config(
+        "quality_lex",
+        price_sensitivity=0.25,
+        brand_loyalty=0.60,
+        purchase_frequency_per_month=2.0,
+    )
 
 
 @pytest.fixture
 def brand_affect_config() -> PersonaConfig:
     """High brand loyalty (0.85) — sticks to 1–2 tiers."""
-    return _make_config("brand_affect", price_sensitivity=0.40, brand_loyalty=0.85, purchase_frequency_per_month=4.0)
+    return _make_config(
+        "brand_affect",
+        price_sensitivity=0.40,
+        brand_loyalty=0.85,
+        purchase_frequency_per_month=4.0,
+    )
 
 
 @pytest.fixture
 def low_involve_config() -> PersonaConfig:
     """High purchase frequency (5.0/month) → ~60 transactions."""
-    return _make_config("low_involve", price_sensitivity=0.50, brand_loyalty=0.30, purchase_frequency_per_month=5.0)
+    return _make_config(
+        "low_involve",
+        price_sensitivity=0.50,
+        brand_loyalty=0.30,
+        purchase_frequency_per_month=5.0,
+    )
 
 
 # ---------------------------------------------------------------------------
 # Basic structural tests
 # ---------------------------------------------------------------------------
 
+
 class TestReturnType:
-    def test_returns_list_of_transaction_records(self, price_lex_config: PersonaConfig) -> None:
+    def test_returns_list_of_transaction_records(
+        self, price_lex_config: PersonaConfig
+    ) -> None:
         result = simulate_transactions(price_lex_config)
         assert isinstance(result, list)
         assert all(isinstance(r, TransactionRecord) for r in result)
 
     def test_empty_possible_with_zero_frequency(self) -> None:
-        config = _make_config("zero_freq", price_sensitivity=0.5, brand_loyalty=0.5, purchase_frequency_per_month=0.0)
+        config = _make_config(
+            "zero_freq",
+            price_sensitivity=0.5,
+            brand_loyalty=0.5,
+            purchase_frequency_per_month=0.0,
+        )
         result = simulate_transactions(config)
         assert isinstance(result, list)
 
 
 class TestFieldValues:
-    def test_transaction_ids_formatted_correctly(self, price_lex_config: PersonaConfig) -> None:
+    def test_transaction_ids_formatted_correctly(
+        self, price_lex_config: PersonaConfig
+    ) -> None:
         records = simulate_transactions(price_lex_config)
         for i, r in enumerate(records):
             assert r.transaction_id == f"tx_{price_lex_config.persona_id}_{i:04d}"
@@ -126,12 +158,16 @@ class TestFieldValues:
             assert r.persona_id == price_lex_config.persona_id
             assert r.participant_id == price_lex_config.persona_id
 
-    def test_days_before_session_in_range(self, price_lex_config: PersonaConfig) -> None:
+    def test_days_before_session_in_range(
+        self, price_lex_config: PersonaConfig
+    ) -> None:
         records = simulate_transactions(price_lex_config)
         for r in records:
             assert 1 <= r.days_before_session <= 365
 
-    def test_price_paid_normalised_in_unit_interval(self, price_lex_config: PersonaConfig) -> None:
+    def test_price_paid_normalised_in_unit_interval(
+        self, price_lex_config: PersonaConfig
+    ) -> None:
         records = simulate_transactions(price_lex_config)
         for r in records:
             assert 0.0 <= r.price_paid_normalised <= 1.0
@@ -172,6 +208,7 @@ class TestFieldValues:
 # Reproducibility
 # ---------------------------------------------------------------------------
 
+
 class TestReproducibility:
     def test_same_seed_same_output(self, price_lex_config: PersonaConfig) -> None:
         r1 = simulate_transactions(price_lex_config)
@@ -181,8 +218,20 @@ class TestReproducibility:
             assert a == b
 
     def test_different_seed_different_output(self) -> None:
-        c1 = _make_config("p", price_sensitivity=0.5, brand_loyalty=0.5, purchase_frequency_per_month=3.0, random_seed=1)
-        c2 = _make_config("p", price_sensitivity=0.5, brand_loyalty=0.5, purchase_frequency_per_month=3.0, random_seed=99)
+        c1 = _make_config(
+            "p",
+            price_sensitivity=0.5,
+            brand_loyalty=0.5,
+            purchase_frequency_per_month=3.0,
+            random_seed=1,
+        )
+        c2 = _make_config(
+            "p",
+            price_sensitivity=0.5,
+            brand_loyalty=0.5,
+            purchase_frequency_per_month=3.0,
+            random_seed=99,
+        )
         r1 = simulate_transactions(c1)
         r2 = simulate_transactions(c2)
         # Very unlikely to be identical
@@ -195,6 +244,7 @@ class TestReproducibility:
 # Validation targets
 # ---------------------------------------------------------------------------
 
+
 class TestPriceDistribution:
     def test_price_lex_mean_below_0_4(self, price_lex_config: PersonaConfig) -> None:
         """price_sensitivity=0.85 → mean price_paid_normalised < 0.4"""
@@ -202,7 +252,9 @@ class TestPriceDistribution:
         mean_price = sum(r.price_paid_normalised for r in records) / len(records)
         assert mean_price < 0.4, f"Expected mean < 0.4, got {mean_price:.3f}"
 
-    def test_quality_lex_mean_above_0_5(self, quality_lex_config: PersonaConfig) -> None:
+    def test_quality_lex_mean_above_0_5(
+        self, quality_lex_config: PersonaConfig
+    ) -> None:
         """price_sensitivity=0.25 → mean price_paid_normalised > 0.5"""
         records = simulate_transactions(quality_lex_config, n_months=36)
         mean_price = sum(r.price_paid_normalised for r in records) / len(records)
@@ -210,7 +262,9 @@ class TestPriceDistribution:
 
 
 class TestBrandLoyalty:
-    def test_brand_affect_concentrated_in_1_2_tiers(self, brand_affect_config: PersonaConfig) -> None:
+    def test_brand_affect_concentrated_in_1_2_tiers(
+        self, brand_affect_config: PersonaConfig
+    ) -> None:
         """brand_loyalty=0.85 → >= 70% transactions in 1–2 distinct tiers."""
         records = simulate_transactions(brand_affect_config, n_months=24)
         tier_counts: dict[str, int] = {}
@@ -224,7 +278,9 @@ class TestBrandLoyalty:
 
 
 class TestPurchaseFrequency:
-    def test_low_involve_expected_transaction_count(self, low_involve_config: PersonaConfig) -> None:
+    def test_low_involve_expected_transaction_count(
+        self, low_involve_config: PersonaConfig
+    ) -> None:
         """purchase_frequency_per_month=5.0 × 12 → ~60 transactions (Poisson)."""
         # Use multiple seeds to get a stable estimate
         counts = []
@@ -239,12 +295,15 @@ class TestPurchaseFrequency:
             counts.append(len(simulate_transactions(config, n_months=12)))
         mean_count = sum(counts) / len(counts)
         # Poisson(60) has std ~7.7; mean should be close to 60
-        assert 45 <= mean_count <= 75, f"Expected ~60 transactions, got mean {mean_count:.1f}"
+        assert 45 <= mean_count <= 75, (
+            f"Expected ~60 transactions, got mean {mean_count:.1f}"
+        )
 
 
 # ---------------------------------------------------------------------------
 # Channel sampling
 # ---------------------------------------------------------------------------
+
 
 class TestChannelSampling:
     def test_channel_mix_respected(self) -> None:

@@ -66,7 +66,12 @@ def _sample_purchase_type(
         w[3] += 0.25
     w = np.clip(w, 0, None)
     w /= w.sum()
-    types = [PurchaseType.PLANNED, PurchaseType.IMPULSE, PurchaseType.HABITUAL, PurchaseType.DEAL_DRIVEN]
+    types = [
+        PurchaseType.PLANNED,
+        PurchaseType.IMPULSE,
+        PurchaseType.HABITUAL,
+        PurchaseType.DEAL_DRIVEN,
+    ]
     return types[int(rng.choice(len(types), p=w))]
 
 

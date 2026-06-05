@@ -36,6 +36,7 @@ class ValidationReport:
     passed: True only if all checks passed.
     failures: list of (check_name, message) for each failed check.
     """
+
     participant_id: str
     passed: bool = True
     failures: list[tuple[str, str]] = field(default_factory=list)
@@ -82,6 +83,7 @@ def validate_participant(
 # Individual checks
 # ---------------------------------------------------------------------------
 
+
 def _check_price_consciousness(
     config: PersonaConfig,
     psychographic: PsychographicVector,
@@ -99,12 +101,16 @@ def _check_price_consciousness(
     if strategy_pc == PriceConsciousness.HIGH and pc < 0.6:
         msg = f"HIGH price_consciousness expected >0.6, got {pc:.3f}"
         report.fail("price_consciousness", msg)
-        bound_log.warning("validation_failed", check="price_consciousness", delta=0.6 - pc)
+        bound_log.warning(
+            "validation_failed", check="price_consciousness", delta=0.6 - pc
+        )
 
     elif strategy_pc == PriceConsciousness.LOW and pc > 0.5:
         msg = f"LOW price_consciousness expected <0.5, got {pc:.3f}"
         report.fail("price_consciousness", msg)
-        bound_log.warning("validation_failed", check="price_consciousness", delta=pc - 0.5)
+        bound_log.warning(
+            "validation_failed", check="price_consciousness", delta=pc - 0.5
+        )
 
 
 def _check_brand_sensitivity(
@@ -125,10 +131,13 @@ def _check_brand_sensitivity(
     if bs < 0.6:
         msg = f"brand_affect brand_sensitivity expected >0.6, got {bs:.3f}"
         report.fail("brand_sensitivity", msg)
-        bound_log.warning("validation_failed", check="brand_sensitivity", delta=0.6 - bs)
+        bound_log.warning(
+            "validation_failed", check="brand_sensitivity", delta=0.6 - bs
+        )
 
     if transactions:
         from collections import Counter
+
         tier_counts = Counter(t.brand_tier for t in transactions)
         top2_count = sum(v for _, v in tier_counts.most_common(2))
         concentration = top2_count / len(transactions)
@@ -152,7 +161,9 @@ def _check_narrative_word_count(
     if wc < 200 or wc > 400:
         msg = f"narrative word_count={wc} not in [200, 400]"
         report.fail("narrative_word_count", msg)
-        bound_log.warning("validation_failed", check="narrative_word_count", word_count=wc)
+        bound_log.warning(
+            "validation_failed", check="narrative_word_count", word_count=wc
+        )
 
 
 def _check_transaction_price_consistency(
@@ -183,7 +194,9 @@ def _check_transaction_price_consistency(
         )
 
     elif ps < 0.3 and mean_price < 0.35:
-        msg = f"low price_sensitivity={ps:.2f} but mean price_paid={mean_price:.3f} <0.35"
+        msg = (
+            f"low price_sensitivity={ps:.2f} but mean price_paid={mean_price:.3f} <0.35"
+        )
         report.fail("transaction_price_consistency", msg)
         bound_log.warning(
             "validation_failed",
@@ -204,11 +217,11 @@ def _check_payne_index_range(
     Only checked for archetypes with well-defined targets.
     """
     _PAYNE_TARGETS: dict[str, tuple[float, float]] = {
-        "price_lex":    (-1.0, -0.4),
-        "compensatory": (-0.4,  0.4),
-        "satisficer":   (-0.7, -0.1),
+        "price_lex": (-1.0, -0.4),
+        "compensatory": (-0.4, 0.4),
+        "satisficer": (-0.7, -0.1),
         "brand_affect": (-1.0, -0.5),
-        "low_involve":  (-0.3,  0.3),
+        "low_involve": (-0.3, 0.3),
     }
     if config.persona_id not in _PAYNE_TARGETS or not trial_records:
         return

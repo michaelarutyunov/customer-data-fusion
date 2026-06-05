@@ -28,6 +28,7 @@ from generator.trace_simulator import simulate_session, _compute_payne_index
 # Shared fixture builders
 # ---------------------------------------------------------------------------
 
+
 def _make_strategy(
     strategy: Strategy,
     depth: InspectionDepth,
@@ -138,6 +139,7 @@ def low_involve_config():
 # Basic API contract tests
 # ---------------------------------------------------------------------------
 
+
 class TestSimulateSessionAPI:
     def test_returns_tuple_of_lists(self, price_lex_config):
         result = simulate_session(price_lex_config)
@@ -165,8 +167,16 @@ class TestSimulateSessionAPI:
         assert [t.payne_index for t in trials1] == [t.payne_index for t in trials2]
 
     def test_different_seeds_produce_different_output(self):
-        c1 = _make_config("price_lex", _make_strategy(Strategy.LEXICOGRAPHIC, InspectionDepth.SHALLOW, "price"), seed=42)
-        c2 = _make_config("price_lex", _make_strategy(Strategy.LEXICOGRAPHIC, InspectionDepth.SHALLOW, "price"), seed=99)
+        c1 = _make_config(
+            "price_lex",
+            _make_strategy(Strategy.LEXICOGRAPHIC, InspectionDepth.SHALLOW, "price"),
+            seed=42,
+        )
+        c2 = _make_config(
+            "price_lex",
+            _make_strategy(Strategy.LEXICOGRAPHIC, InspectionDepth.SHALLOW, "price"),
+            seed=99,
+        )
         _, t1 = simulate_session(c1, n_trials=5)
         _, t2 = simulate_session(c2, n_trials=5)
         # At least one trial should differ
@@ -176,6 +186,7 @@ class TestSimulateSessionAPI:
 # ---------------------------------------------------------------------------
 # TrialRecord field tests
 # ---------------------------------------------------------------------------
+
 
 class TestTrialRecordFields:
     def test_persona_id_matches_config(self, price_lex_config):
@@ -239,6 +250,7 @@ class TestTrialRecordFields:
 # AcquisitionEvent field tests
 # ---------------------------------------------------------------------------
 
+
 class TestAcquisitionEventFields:
     def test_event_index_starts_at_zero_per_trial(self, price_lex_config):
         events, trials = simulate_session(price_lex_config, n_trials=5)
@@ -253,7 +265,9 @@ class TestAcquisitionEventFields:
                 [e for e in events if e.trial_id == trial.trial_id],
                 key=lambda e: e.event_index,
             )
-            assert [e.event_index for e in trial_events] == list(range(len(trial_events)))
+            assert [e.event_index for e in trial_events] == list(
+                range(len(trial_events))
+            )
 
     def test_timestamp_non_negative_and_monotone(self, price_lex_config):
         events, trials = simulate_session(price_lex_config, n_trials=5)
@@ -289,28 +303,47 @@ class TestAcquisitionEventFields:
 # Payne Index formula tests
 # ---------------------------------------------------------------------------
 
+
 class TestPayneIndex:
     def test_pure_dimensional_gives_negative_one(self):
         """All transitions are attribute-wise (same attr, diff alt) -> PI = -1."""
+
         def _evt(alt, attr, idx):
             return AcquisitionEvent(
-                participant_id="p", trial_id="t", event_index=idx,
-                alternative_id=alt, attribute_id=attr,
-                timestamp_s=float(idx), dwell_ms=500.0, is_reinspection=False,
+                participant_id="p",
+                trial_id="t",
+                event_index=idx,
+                alternative_id=alt,
+                attribute_id=attr,
+                timestamp_s=float(idx),
+                dwell_ms=500.0,
+                is_reinspection=False,
             )
+
         # A0-price, A1-price, A2-price (dimensional column scan)
-        events = [_evt("A0", "price", 0), _evt("A1", "price", 1), _evt("A2", "price", 2)]
+        events = [
+            _evt("A0", "price", 0),
+            _evt("A1", "price", 1),
+            _evt("A2", "price", 2),
+        ]
         pi = _compute_payne_index(events)
         assert pi == pytest.approx(-1.0)
 
     def test_pure_holistic_gives_positive_one(self):
         """All transitions are same alt, diff attr -> PI = +1."""
+
         def _evt(alt, attr, idx):
             return AcquisitionEvent(
-                participant_id="p", trial_id="t", event_index=idx,
-                alternative_id=alt, attribute_id=attr,
-                timestamp_s=float(idx), dwell_ms=500.0, is_reinspection=False,
+                participant_id="p",
+                trial_id="t",
+                event_index=idx,
+                alternative_id=alt,
+                attribute_id=attr,
+                timestamp_s=float(idx),
+                dwell_ms=500.0,
+                is_reinspection=False,
             )
+
         events = [_evt("A", "price", 0), _evt("A", "brand", 1), _evt("A", "quality", 2)]
         pi = _compute_payne_index(events)
         assert pi == pytest.approx(1.0)
@@ -321,9 +354,14 @@ class TestPayneIndex:
 
     def test_single_event_gives_zero(self):
         e = AcquisitionEvent(
-            participant_id="p", trial_id="t", event_index=0,
-            alternative_id="A", attribute_id="price",
-            timestamp_s=0.0, dwell_ms=500.0, is_reinspection=False,
+            participant_id="p",
+            trial_id="t",
+            event_index=0,
+            alternative_id="A",
+            attribute_id="price",
+            timestamp_s=0.0,
+            dwell_ms=500.0,
+            is_reinspection=False,
         )
         pi = _compute_payne_index([e])
         assert pi == 0.0
@@ -345,12 +383,16 @@ class TestCalibrationPriceLex:
     def test_payne_index_range(self, price_lex_config):
         _, trials = simulate_session(price_lex_config, n_trials=N_CALIBRATION_TRIALS)
         median_pi = float(np.median([t.payne_index for t in trials]))
-        assert -0.8 <= median_pi <= -0.6, f"price_lex PI median={median_pi:.3f} not in [-0.8, -0.6]"
+        assert -0.8 <= median_pi <= -0.6, (
+            f"price_lex PI median={median_pi:.3f} not in [-0.8, -0.6]"
+        )
 
     def test_prop_cells_range(self, price_lex_config):
         _, trials = simulate_session(price_lex_config, n_trials=N_CALIBRATION_TRIALS)
         median_prop = float(np.median([t.prop_cells_inspected for t in trials]))
-        assert 0.15 <= median_prop <= 0.30, f"price_lex prop_cells median={median_prop:.3f} not in [0.15, 0.30]"
+        assert 0.15 <= median_prop <= 0.30, (
+            f"price_lex prop_cells median={median_prop:.3f} not in [0.15, 0.30]"
+        )
 
 
 class TestCalibrationCompensatory:
@@ -359,12 +401,16 @@ class TestCalibrationCompensatory:
     def test_payne_index_range(self, compensatory_config):
         _, trials = simulate_session(compensatory_config, n_trials=N_CALIBRATION_TRIALS)
         median_pi = float(np.median([t.payne_index for t in trials]))
-        assert -0.2 <= median_pi <= 0.2, f"compensatory PI median={median_pi:.3f} not in [-0.2, 0.2]"
+        assert -0.2 <= median_pi <= 0.2, (
+            f"compensatory PI median={median_pi:.3f} not in [-0.2, 0.2]"
+        )
 
     def test_prop_cells_range(self, compensatory_config):
         _, trials = simulate_session(compensatory_config, n_trials=N_CALIBRATION_TRIALS)
         median_prop = float(np.median([t.prop_cells_inspected for t in trials]))
-        assert 0.60 <= median_prop <= 0.85, f"compensatory prop_cells median={median_prop:.3f} not in [0.60, 0.85]"
+        assert 0.60 <= median_prop <= 0.85, (
+            f"compensatory prop_cells median={median_prop:.3f} not in [0.60, 0.85]"
+        )
 
 
 class TestCalibrationSatisficer:
@@ -373,12 +419,16 @@ class TestCalibrationSatisficer:
     def test_payne_index_range(self, satisficer_config):
         _, trials = simulate_session(satisficer_config, n_trials=N_CALIBRATION_TRIALS)
         median_pi = float(np.median([t.payne_index for t in trials]))
-        assert -0.5 <= median_pi <= -0.3, f"satisficer PI median={median_pi:.3f} not in [-0.5, -0.3]"
+        assert -0.5 <= median_pi <= -0.3, (
+            f"satisficer PI median={median_pi:.3f} not in [-0.5, -0.3]"
+        )
 
     def test_prop_cells_range(self, satisficer_config):
         _, trials = simulate_session(satisficer_config, n_trials=N_CALIBRATION_TRIALS)
         median_prop = float(np.median([t.prop_cells_inspected for t in trials]))
-        assert 0.30 <= median_prop <= 0.55, f"satisficer prop_cells median={median_prop:.3f} not in [0.30, 0.55]"
+        assert 0.30 <= median_prop <= 0.55, (
+            f"satisficer prop_cells median={median_prop:.3f} not in [0.30, 0.55]"
+        )
 
 
 class TestCalibrationBrandAffect:
@@ -390,12 +440,16 @@ class TestCalibrationBrandAffect:
     def test_payne_index_range(self, brand_affect_config):
         _, trials = simulate_session(brand_affect_config, n_trials=N_CALIBRATION_TRIALS)
         median_pi = float(np.median([t.payne_index for t in trials]))
-        assert -0.9 <= median_pi <= -0.7, f"brand_affect PI median={median_pi:.3f} not in [-0.9, -0.7]"
+        assert -0.9 <= median_pi <= -0.7, (
+            f"brand_affect PI median={median_pi:.3f} not in [-0.9, -0.7]"
+        )
 
     def test_prop_cells_range(self, brand_affect_config):
         _, trials = simulate_session(brand_affect_config, n_trials=N_CALIBRATION_TRIALS)
         median_prop = float(np.median([t.prop_cells_inspected for t in trials]))
-        assert 0.10 <= median_prop <= 0.30, f"brand_affect prop_cells median={median_prop:.3f} not in [0.10, 0.30]"
+        assert 0.10 <= median_prop <= 0.30, (
+            f"brand_affect prop_cells median={median_prop:.3f} not in [0.10, 0.30]"
+        )
 
 
 class TestCalibrationLowInvolve:
@@ -404,17 +458,22 @@ class TestCalibrationLowInvolve:
     def test_payne_index_range(self, low_involve_config):
         _, trials = simulate_session(low_involve_config, n_trials=N_CALIBRATION_TRIALS)
         median_pi = float(np.median([t.payne_index for t in trials]))
-        assert -0.1 <= median_pi <= 0.1, f"low_involve PI median={median_pi:.3f} not in [-0.1, 0.1]"
+        assert -0.1 <= median_pi <= 0.1, (
+            f"low_involve PI median={median_pi:.3f} not in [-0.1, 0.1]"
+        )
 
     def test_prop_cells_range(self, low_involve_config):
         _, trials = simulate_session(low_involve_config, n_trials=N_CALIBRATION_TRIALS)
         median_prop = float(np.median([t.prop_cells_inspected for t in trials]))
-        assert 0.20 <= median_prop <= 0.45, f"low_involve prop_cells median={median_prop:.3f} not in [0.20, 0.45]"
+        assert 0.20 <= median_prop <= 0.45, (
+            f"low_involve prop_cells median={median_prop:.3f} not in [0.20, 0.45]"
+        )
 
 
 # ---------------------------------------------------------------------------
 # Dwell time distribution tests
 # ---------------------------------------------------------------------------
+
 
 class TestDwellTimes:
     def test_dwell_lognormal_positive_skew(self, price_lex_config):
@@ -430,36 +489,47 @@ class TestDwellTimes:
         """price_lex mean dwell 800-1200ms."""
         events, _ = simulate_session(price_lex_config, n_trials=30)
         mean_dwell = np.mean([e.dwell_ms for e in events])
-        assert 800 <= mean_dwell <= 1200, f"price_lex mean_dwell={mean_dwell:.0f} not in [800, 1200]"
+        assert 800 <= mean_dwell <= 1200, (
+            f"price_lex mean_dwell={mean_dwell:.0f} not in [800, 1200]"
+        )
 
     def test_compensatory_dwell_range(self, compensatory_config):
         """compensatory mean dwell 1000-1800ms."""
         events, _ = simulate_session(compensatory_config, n_trials=30)
         mean_dwell = np.mean([e.dwell_ms for e in events])
-        assert 1000 <= mean_dwell <= 1800, f"compensatory mean_dwell={mean_dwell:.0f} not in [1000, 1800]"
+        assert 1000 <= mean_dwell <= 1800, (
+            f"compensatory mean_dwell={mean_dwell:.0f} not in [1000, 1800]"
+        )
 
     def test_brand_affect_dwell_range(self, brand_affect_config):
         """brand_affect mean dwell 600-1000ms."""
         events, _ = simulate_session(brand_affect_config, n_trials=30)
         mean_dwell = np.mean([e.dwell_ms for e in events])
-        assert 600 <= mean_dwell <= 1000, f"brand_affect mean_dwell={mean_dwell:.0f} not in [600, 1000]"
+        assert 600 <= mean_dwell <= 1000, (
+            f"brand_affect mean_dwell={mean_dwell:.0f} not in [600, 1000]"
+        )
 
     def test_low_involve_dwell_range(self, low_involve_config):
         """low_involve mean dwell 400-800ms."""
         events, _ = simulate_session(low_involve_config, n_trials=30)
         mean_dwell = np.mean([e.dwell_ms for e in events])
-        assert 400 <= mean_dwell <= 800, f"low_involve mean_dwell={mean_dwell:.0f} not in [400, 800]"
+        assert 400 <= mean_dwell <= 800, (
+            f"low_involve mean_dwell={mean_dwell:.0f} not in [400, 800]"
+        )
 
     def test_satisficer_dwell_range(self, satisficer_config):
         """satisficer mean dwell 900-1400ms."""
         events, _ = simulate_session(satisficer_config, n_trials=30)
         mean_dwell = np.mean([e.dwell_ms for e in events])
-        assert 900 <= mean_dwell <= 1400, f"satisficer mean_dwell={mean_dwell:.0f} not in [900, 1400]"
+        assert 900 <= mean_dwell <= 1400, (
+            f"satisficer mean_dwell={mean_dwell:.0f} not in [900, 1400]"
+        )
 
 
 # ---------------------------------------------------------------------------
 # Fatigue and time pressure tests
 # ---------------------------------------------------------------------------
+
 
 class TestFatigueAndTimePressure:
     def test_late_trials_lower_prop_cells(self):
@@ -473,13 +543,21 @@ class TestFatigueAndTimePressure:
             seed=42,
         )
         _, trials = simulate_session(config, n_trials=25)
-        early_prop = np.mean([t.prop_cells_inspected for t in trials if t.trial_index < 15])
-        late_prop = np.mean([t.prop_cells_inspected for t in trials if t.trial_index >= 15])
-        assert late_prop < early_prop, f"Fatigue not applied: late={late_prop:.3f} >= early={early_prop:.3f}"
+        early_prop = np.mean(
+            [t.prop_cells_inspected for t in trials if t.trial_index < 15]
+        )
+        late_prop = np.mean(
+            [t.prop_cells_inspected for t in trials if t.trial_index >= 15]
+        )
+        assert late_prop < early_prop, (
+            f"Fatigue not applied: late={late_prop:.3f} >= early={early_prop:.3f}"
+        )
 
     def test_time_pressure_occurs(self, price_lex_config):
         """~30% of trials should have time_pressure=True."""
         _, trials = simulate_session(price_lex_config, n_trials=60)
         pressure_count = sum(1 for t in trials if t.time_pressure)
         proportion = pressure_count / len(trials)
-        assert 0.15 <= proportion <= 0.45, f"Time pressure proportion={proportion:.2f} not in [0.15, 0.45]"
+        assert 0.15 <= proportion <= 0.45, (
+            f"Time pressure proportion={proportion:.2f} not in [0.15, 0.45]"
+        )

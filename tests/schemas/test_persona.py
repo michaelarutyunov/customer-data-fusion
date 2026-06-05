@@ -1,4 +1,5 @@
 """Unit tests for schemas/persona.py."""
+
 from __future__ import annotations
 
 import json
@@ -21,6 +22,7 @@ from schemas.persona import (
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def strategy_lex() -> StrategyParams:
     return StrategyParams(
@@ -39,7 +41,12 @@ def strategy_compensatory() -> StrategyParams:
     return StrategyParams(
         primary_strategy=Strategy.COMPENSATORY,
         inspection_depth=InspectionDepth.DEEP,
-        attribute_weights={"price": 0.35, "quality": 0.30, "brand": 0.20, "other": 0.15},
+        attribute_weights={
+            "price": 0.35,
+            "quality": 0.30,
+            "brand": 0.20,
+            "other": 0.15,
+        },
         p_reinspect=0.30,
         p_strategy_lapse=0.05,
         time_pressure_multiplier=0.65,
@@ -98,6 +105,7 @@ def persona_config(
 # Enum tests
 # ---------------------------------------------------------------------------
 
+
 class TestEnums:
     def test_strategy_values_are_strings(self):
         for member in Strategy:
@@ -117,7 +125,9 @@ class TestEnums:
         assert PriceConsciousness.MEDIUM.value == "medium"
         assert PriceConsciousness.HIGH.value == "high"
 
-    @pytest.mark.parametrize("enum_cls", [Strategy, InspectionDepth, PriceConsciousness])
+    @pytest.mark.parametrize(
+        "enum_cls", [Strategy, InspectionDepth, PriceConsciousness]
+    )
     def test_enum_is_str_subclass(self, enum_cls):
         for member in enum_cls:
             assert isinstance(member, str)
@@ -126,6 +136,7 @@ class TestEnums:
 # ---------------------------------------------------------------------------
 # StrategyParams tests
 # ---------------------------------------------------------------------------
+
 
 class TestStrategyParams:
     def test_frozen(self, strategy_lex):
@@ -174,6 +185,7 @@ class TestStrategyParams:
 # TransactionParams tests
 # ---------------------------------------------------------------------------
 
+
 class TestTransactionParams:
     def test_frozen(self, transaction_params):
         with pytest.raises((dataclasses.FrozenInstanceError, AttributeError)):
@@ -193,6 +205,7 @@ class TestTransactionParams:
 # PsychographicParams tests
 # ---------------------------------------------------------------------------
 
+
 class TestPsychographicParams:
     def test_frozen(self, psychographic_params):
         with pytest.raises((dataclasses.FrozenInstanceError, AttributeError)):
@@ -202,7 +215,12 @@ class TestPsychographicParams:
         assert isinstance(psychographic_params.price_consciousness, PriceConsciousness)
 
     def test_scores_in_range(self, psychographic_params):
-        for attr in ("involvement_score", "maximiser_score", "risk_tolerance", "openness_to_new"):
+        for attr in (
+            "involvement_score",
+            "maximiser_score",
+            "risk_tolerance",
+            "openness_to_new",
+        ):
             val = getattr(psychographic_params, attr)
             assert 0.0 <= val <= 1.0, f"{attr}={val} out of [0,1]"
 
@@ -210,6 +228,7 @@ class TestPsychographicParams:
 # ---------------------------------------------------------------------------
 # NarrativeParams tests
 # ---------------------------------------------------------------------------
+
 
 class TestNarrativeParams:
     def test_frozen(self, narrative_params):
@@ -227,6 +246,7 @@ class TestNarrativeParams:
 # ---------------------------------------------------------------------------
 # PersonaConfig tests
 # ---------------------------------------------------------------------------
+
 
 class TestPersonaConfig:
     def test_frozen(self, persona_config):

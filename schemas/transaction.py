@@ -18,9 +18,9 @@ class Channel(str, Enum):
 
 
 class PurchaseType(str, Enum):
-    PLANNED = "planned"          # intended purchase
-    IMPULSE = "impulse"          # unplanned
-    HABITUAL = "habitual"        # repeat without deliberation
+    PLANNED = "planned"  # intended purchase
+    IMPULSE = "impulse"  # unplanned
+    HABITUAL = "habitual"  # repeat without deliberation
     DEAL_DRIVEN = "deal_driven"  # triggered by promotion
 
 
@@ -34,16 +34,17 @@ class TransactionRecord:
     range observed in the synthetic market, enabling cross-category
     comparison without raw price leakage.
     """
+
     participant_id: str
     transaction_id: str
-    days_before_session: int       # 1–365; relative to process trace session date
+    days_before_session: int  # 1–365; relative to process trace session date
     category: str
-    product_id: str                # anonymised product identifier
-    brand_tier: str                # "premium", "mid", "value", "own_label"
-    price_paid_normalised: float   # 0–1 percentile within category
+    product_id: str  # anonymised product identifier
+    brand_tier: str  # "premium", "mid", "value", "own_label"
+    price_paid_normalised: float  # 0–1 percentile within category
     quantity: int
     channel: Channel
     purchase_type: PurchaseType
     on_promotion: bool
-    persona_id: str                # ground truth archetype (synthetic data only)
+    persona_id: str  # ground truth archetype (synthetic data only)
     loyalty_card: Optional[bool] = None  # retailer loyalty programme membership
