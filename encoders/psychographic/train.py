@@ -37,7 +37,7 @@ PERSONA_LABELS: list[str] = [
     "compensatory",
     "satisficer",
     "brand_affect",
-    "random",
+    "quality_lex",
     "adaptive",
     "low_involve",
 ]

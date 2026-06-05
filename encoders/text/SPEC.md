@@ -64,7 +64,7 @@ This is the only trained component. It learns to project the 384-dim semantic sp
 
 ## Embedding Persistence
 
-After inference, write embeddings back to `narratives.jsonl`:
+After inference, write embeddings back to `data/synthetic/narratives.jsonl`:
 
 ```python
 from dataclasses import asdict, replace
@@ -107,5 +107,5 @@ e_text = encoder(texts)  # [batch_size, 128]
 
 - sentence-transformer model must be downloaded once via `sentence_transformers.SentenceTransformer("all-MiniLM-L6-v2")` — requires internet on first run; cached thereafter
 - Do not fine-tune the sentence-transformer weights — frozen inference only
-- If narrative generation was skipped (`--skip-narratives` in pipeline), `narratives.jsonl` will be empty — text encoder cannot run; handle gracefully with a clear error message
+- If narrative generation was skipped (`--skip-narratives` in pipeline), `data/synthetic/narratives.jsonl` will be empty — text encoder cannot run; handle gracefully with a clear error message
 - Embedding quality depends on narrative diversity — if all same-persona narratives are nearly identical (cosine sim > 0.95), the text modality adds no information beyond the psychographic vector

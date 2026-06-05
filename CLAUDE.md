@@ -39,21 +39,23 @@ data/
 
 | File | Purpose |
 |---|---|
-| `schemas/persona.py` | `PersonaConfig` dataclass — generative root |
-| `schemas/trace.py` | `AcquisitionEvent`, `TrialRecord` dataclasses |
-| `schemas/transaction.py` | `TransactionRecord` dataclass |
-| `schemas/text.py` | `PersonaNarrative` dataclass |
-| `schemas/psychographic.py` | `PsychographicVector` dataclass |
-| `config/personas.yaml` | 7 persona archetype definitions |
+| `.claude/context/project-vision.md` | Project purpose, architecture, success criteria |
+| **Schemas (data contracts)** | |
+| `schemas/__init__.py` | All exports including `EMBEDDING_DIM = 128` |
+| `schemas/persona.py` | `PersonaConfig` — generative root for all modalities |
+| **Configuration** | |
+| `config/personas.yaml` | 7 persona archetype definitions — source of all synthetic data |
+| **Generator** | |
+| `generator/SPEC.md` | Generator module spec, output schemas, calibration targets |
 | `generator/pipeline.py` | Orchestrates all modalities per participant |
-| `generator/trace_simulator.py` | MouseLab-style acquisition sequence simulator |
-| `generator/transaction_simulator.py` | 12-month purchase history simulator |
-| `generator/psychographic_generator.py` | Psychographic vector generator |
-| `generator/text_generator.py` | LLM narrative generator (DeepSeek / Anthropic) |
 | `generator/validate.py` | Cross-modal consistency checks |
-| `notebooks/01_generator_eda.ipynb` | Phase 1 EDA — calibration validation |
-| `encoders/trace/model.py` | Transformer sequence encoder *(Phase 2)* |
-| `fusion/meta_learner.py` | Late fusion: logistic regression / shallow MLP *(Phase 3)* |
+| **Encoders** | |
+| `encoders/trace/SPEC.md` | Trace encoder spec — primary behavioural signal |
+| `encoders/transaction/SPEC.md` | Transaction encoder spec — GRU, next brand_tier |
+| `encoders/text/SPEC.md` | Text encoder spec — frozen sentence-transformer |
+| `encoders/psychographic/SPEC.md` | Psychographic encoder spec — MLP, supervised |
+| **Fusion** | |
+| `fusion/SPEC.md` | Fusion layer spec *(create before Phase 2b)* |
 
 ---
 
@@ -146,8 +148,8 @@ Every bead that dispatches parallel sub-agents must include an explicit **Merge 
 | `schemas/**` | `.claude/agents/schema-guardian/AGENT.md` |
 | `config/personas.yaml`, `generator/**` | `.claude/agents/generator-specialist/AGENT.md` |
 | `encoders/**` | `.claude/agents/encoder-specialist/AGENT.md` |
-| `fusion/**` | `.claude/agents/fusion-specialist/AGENT.md` |
-| `evaluation/**` | `.claude/agents/evaluation-specialist/AGENT.md` |
+| `fusion/**` | `.claude/agents/fusion-specialist/AGENT.md` *(placeholder)* |
+| `evaluation/**` | `.claude/agents/evaluation-specialist/AGENT.md` *(placeholder)* |
 
 > Agents not yet created are placeholders — create on first observed failure in that domain.
 
@@ -163,10 +165,11 @@ Every bead that dispatches parallel sub-agents must include an explicit **Merge 
 | Persona archetypes | `.claude/context/persona-archetypes.md` |
 | Data contracts | `.claude/context/data-contracts.md` |
 | Phase 1 post-mortem | `.claude/context/phase1-postmortem.md` |
-| Fusion architecture | `.claude/context/fusion-architecture.md` *(create before encoder training phase)* |
+| Phase 2a post-mortem | `.claude/context/phase2a-postmortem.md` |
+| Fusion architecture | `.claude/context/fusion-architecture.md` *(create before Phase 2b)* |
 
 ---
 
 ## Current Phase
 
-**Phase 2 — Encoders.** Phase 1 synthetic data generator complete. All 7 archetypes within Payne et al. calibration targets (confirmed in `notebooks/01_generator_eda.ipynb`). Next: implement modality encoders (`encoders/trace/`, `encoders/transaction/`, `encoders/text/`, `encoders/psychographic/`).
+**Phase 2b — Fusion.** Phase 2a complete: all 4 modality encoders implemented (`encoders/trace/`, `encoders/transaction/`, `encoders/text/`, `encoders/psychographic/`). Probe evaluation complete — text (99%) and psychographic (100%) pass thresholds; trace (38%) and transaction (bug) need work. See `.claude/context/phase2a-postmortem.md` for full assessment. Next: fusion layer (`fusion/`), encoder checkpoint management, transaction training bug fix, participant diversity increase.
