@@ -46,10 +46,14 @@ data/
 | `schemas/psychographic.py` | `PsychographicVector` dataclass |
 | `config/personas.yaml` | 7 persona archetype definitions |
 | `generator/pipeline.py` | Orchestrates all modalities per participant |
+| `generator/trace_simulator.py` | MouseLab-style acquisition sequence simulator |
+| `generator/transaction_simulator.py` | 12-month purchase history simulator |
+| `generator/psychographic_generator.py` | Psychographic vector generator |
+| `generator/text_generator.py` | LLM narrative generator (DeepSeek / Anthropic) |
 | `generator/validate.py` | Cross-modal consistency checks |
-| `encoders/trace/model.py` | Transformer sequence encoder |
-| `fusion/meta_learner.py` | Late fusion: logistic regression / shallow MLP |
-| `PRD.md` | Top-level product requirements document |
+| `notebooks/01_generator_eda.ipynb` | Phase 1 EDA — calibration validation |
+| `encoders/trace/model.py` | Transformer sequence encoder *(Phase 2)* |
+| `fusion/meta_learner.py` | Late fusion: logistic regression / shallow MLP *(Phase 3)* |
 
 ---
 
@@ -71,7 +75,7 @@ data/
 - `data/synthetic/` and `data/calibration/` are gitignored — never commit generated data
 - `.env` is gitignored — API keys (DeepSeek, Anthropic) live there only
 - Experiment runs logged to MLflow (`mlruns/` — also gitignored)
-- All tests use `BEADS_DB=/tmp/test.db` — never pollute production Beads DB
+- All tests set env var `BEADS_DB` to a temp path — never pollute production Beads DB
 
 ---
 
@@ -114,7 +118,7 @@ This project uses `bd` (Beads) for all task tracking.
 - `bd close <id>` — close when complete
 - `bd remember "insight"` — persist cross-session notes
 - Never use `TodoWrite`, `TaskCreate`, or markdown TODO lists — use `bd` exclusively
-- Never create `MEMORY.md` files — use `bd remember` instead
+- Never create MEMORY.md files — use `bd remember` instead
 
 ---
 
@@ -139,13 +143,12 @@ This project uses `bd` (Beads) for all task tracking.
 | Project vision | `.claude/context/project-vision.md` |
 | Engineering conventions | `.claude/context/engineering-conventions.md` |
 | Governance principles | `.claude/context/codified-context-principles.md` |
-| Persona archetypes | `.claude/context/persona-archetypes.md` *(create when personas.yaml is populated)* |
-| Data contracts | `.claude/context/data-contracts.md` *(create when schemas are stable)* |
+| Persona archetypes | `.claude/context/persona-archetypes.md` |
+| Data contracts | `.claude/context/data-contracts.md` |
 | Fusion architecture | `.claude/context/fusion-architecture.md` *(create before encoder training phase)* |
-
 
 ---
 
 ## Current Phase
 
-**Phase 1 — Skeleton.** Repo structure initialised. Next: populate `schemas/` and `config/personas.yaml`, then build `generator/`.
+**Phase 2 — Encoders.** Phase 1 synthetic data generator complete. All 7 archetypes within Payne et al. calibration targets (confirmed in `notebooks/01_generator_eda.ipynb`). Next: implement modality encoders (`encoders/trace/`, `encoders/transaction/`, `encoders/text/`, `encoders/psychographic/`).

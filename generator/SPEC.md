@@ -18,11 +18,11 @@ Four JSONL files written to `data/synthetic/`:
 
 | File | Schema | One record per |
 |---|---|---|
-| `traces.jsonl` | `AcquisitionEvent` | Cell inspection event |
-| `trials.jsonl` | `TrialRecord` | Completed trial |
-| `transactions.jsonl` | `TransactionRecord` | Purchase event |
-| `psychographics.jsonl` | `PsychographicVector` | Participant |
-| `narratives.jsonl` | `PersonaNarrative` | Participant |
+| `data/synthetic/traces.jsonl` | `AcquisitionEvent` | Cell inspection event |
+| `data/synthetic/trials.jsonl` | `TrialRecord` | Completed trial |
+| `data/synthetic/transactions.jsonl` | `TransactionRecord` | Purchase event |
+| `data/synthetic/psychographics.jsonl` | `PsychographicVector` | Participant |
+| `data/synthetic/narratives.jsonl` | `PersonaNarrative` | Participant |
 
 Serialisation: `dataclasses.asdict()` + `json.dumps()`. Enum values as `.value`. No pickle.
 
@@ -30,13 +30,13 @@ Serialisation: `dataclasses.asdict()` + `json.dumps()`. Enum values as `.value`.
 
 | File | Responsibility |
 |---|---|
-| `persona_sampler.py` | Load `personas.yaml`; sample `PersonaConfig` instances with noise around archetype params |
-| `trace_simulator.py` | Simulate MouseLab-style acquisition sequences per trial per participant |
-| `transaction_simulator.py` | Generate 12-month purchase history from `TransactionParams` |
-| `psychographic_generator.py` | Generate fixed-width psychographic vector from `PsychographicParams` |
-| `text_generator.py` | Call DeepSeek API (Anthropic fallback) to generate persona narrative |
-| `validate.py` | Cross-modal consistency checks post-generation |
-| `pipeline.py` | Orchestrate all generators for a full synthetic dataset |
+| `generator/persona_sampler.py` | Load `config/personas.yaml`; sample `PersonaConfig` instances with noise around archetype params |
+| `generator/trace_simulator.py` | Simulate MouseLab-style acquisition sequences per trial per participant |
+| `generator/transaction_simulator.py` | Generate 12-month purchase history from `TransactionParams` |
+| `generator/psychographic_generator.py` | Generate fixed-width psychographic vector from `PsychographicParams` |
+| `generator/text_generator.py` | Call DeepSeek API (Anthropic fallback) to generate persona narrative |
+| `generator/validate.py` | Cross-modal consistency checks post-generation |
+| `generator/pipeline.py` | Orchestrate all generators for a full synthetic dataset |
 
 ## Cross-Modal Consistency Invariant
 
@@ -50,7 +50,7 @@ psychographic = generate_psychographic(config) # reads config.psychographic
 narrative   = generate_narrative(config)     # reads config.narrative
 ```
 
-Consistency relationships enforced by `validate.py`:
+Consistency relationships enforced by `generator/validate.py`:
 
 | Persona type | Cross-modal signal |
 |---|---|
@@ -95,10 +95,10 @@ where $A$ = alternative-wise transitions, $W$ = attribute-wise transitions in th
 - Primary: DeepSeek via OpenAI-compatible endpoint (`DEEPSEEK_API_KEY`)
 - Fallback: Anthropic API (`ANTHROPIC_API_KEY`)
 - Target: 250–350 words; validate `word_count` post-generation
-- `PersonaNarrative.embedding` is `None` at generation — populated by `encoders/text/embed.py`
+- PersonaNarrative embedding field is `None` at generation — populated by `encoders/text/embed.py`
 - Batch all LLM calls; never call inside a trial simulation loop
 
-## Validation Rules (`validate.py`)
+## Validation Rules (`generator/validate.py`)
 
 Failures logged at WARNING via structlog; do not raise exceptions.
 
@@ -113,9 +113,9 @@ Failures logged at WARNING via structlog; do not raise exceptions.
 Prototype target: 1,000 participants × 20 trials × 3 categories.
 
 Expected output sizes:
-- `traces.jsonl`: ~600k–1.2M records
-- `transactions.jsonl`: ~30k records (mean 30 per participant)
-- `psychographics.jsonl`: 1,000 records
-- `narratives.jsonl`: 1,000 records
+- `data/synthetic/traces.jsonl`: ~600k–1.2M records
+- `data/synthetic/transactions.jsonl`: ~30k records (mean 30 per participant)
+- `data/synthetic/psychographics.jsonl`: 1,000 records
+- `data/synthetic/narratives.jsonl`: 1,000 records
 
 Log progress via structlog at INFO every 100 participants.
