@@ -145,6 +145,7 @@ This project uses `bd` (Beads) for all task tracking.
 | Governance principles | `.claude/context/codified-context-principles.md` |
 | Persona archetypes | `.claude/context/persona-archetypes.md` |
 | Data contracts | `.claude/context/data-contracts.md` |
+| Phase 1 post-mortem | `.claude/context/phase1-postmortem.md` |
 | Fusion architecture | `.claude/context/fusion-architecture.md` *(create before encoder training phase)* |
 
 ---
