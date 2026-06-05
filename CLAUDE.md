@@ -120,6 +120,23 @@ This project uses `bd` (Beads) for all task tracking.
 - Never use `TodoWrite`, `TaskCreate`, or markdown TODO lists — use `bd` exclusively
 - Never create MEMORY.md files — use `bd remember` instead
 
+### Dependency type constraint (beads)
+
+`bd dep add` has two legal dependency types — using the wrong one causes `bd close` to fail:
+
+| Relationship | Command | Type flag |
+|---|---|---|
+| Task B must complete after task A | `bd dep add B A` | *(default `blocks`)* |
+| Task belongs to an epic | `bd dep add <task> <epic> -t parent-child` | `-t parent-child` |
+
+**`blocks` between a task and an epic is rejected** — epics are containers, not sequenced work items. Always use `-t parent-child` to link tasks to their containing epic. Using the wrong type requires `bd close --force` as a workaround.
+
+### Parallel sub-agent worktree merge
+
+Parallel sub-agents (`TaskCreate` with `isolation: "worktree"`) write their output to an isolated git worktree, not to the main working directory. After a sub-agent completes, copy result files back manually using `cp -f` from the worktree path printed in the sub-agent result into the corresponding module directory in the main repo.
+
+Every bead that dispatches parallel sub-agents must include an explicit **Merge step** in its acceptance criteria listing which files to copy back.
+
 ---
 
 ## Agent Trigger Table
