@@ -76,7 +76,13 @@
       "Write(config/**)",
       "Write(notebooks/**)",
       "Write(data/synthetic/**)",
-      "Write(data/calibration/**)"
+      "Write(data/calibration/**)",
+      "Write(tests/**)",
+      "Edit(encoders/**)",
+      "Edit(tests/**)",
+      "Edit(generator/**)",
+      "Edit(config/**)",
+      "Edit(schemas/**)"
     ],
     "deny": [
       "Bash(curl:*)",
