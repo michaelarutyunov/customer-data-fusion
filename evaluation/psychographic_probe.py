@@ -19,13 +19,12 @@ import numpy as np
 import torch
 
 from evaluation.probe import probe_logistic_regression
-from schemas import PERSONA_TO_IDX
+from schemas import PERSONA_TO_IDX, CHECKPOINT_PATHS
 
 logger = logging.getLogger(__name__)
 
 DATA_DIR = Path("data/synthetic")
-MODEL_DIR = Path("models")
-PSYCHO_MODEL_PATH = MODEL_DIR / "psychographic_encoder.pt"
+PSYCHO_MODEL_PATH = CHECKPOINT_PATHS["psychographic"]
 
 
 def load_psychographic_data(

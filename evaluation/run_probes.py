@@ -38,7 +38,7 @@ from sklearn.preprocessing import StandardScaler
 
 from schemas import PERSONA_LABELS, PERSONA_TO_IDX
 
-load_dotenv()
+load_dotenv(override=True)
 
 logger = logging.getLogger(__name__)
 

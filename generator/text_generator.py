@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 from schemas.persona import PersonaConfig
 from schemas.text import PersonaNarrative
 
-load_dotenv()
+load_dotenv(override=True)
 
 log = structlog.get_logger()
 

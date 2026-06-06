@@ -21,6 +21,7 @@ import torch.nn.functional as F
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
 
+from schemas import CHECKPOINT_PATHS
 from schemas.trace import AcquisitionEvent, TrialRecord
 
 from encoders.trace.model import TraceEncoder
@@ -422,12 +423,13 @@ def train(
     weight_decay: float = DEFAULT_WEIGHT_DECAY,
     seed: int = DEFAULT_SEED,
     device: str = "cpu",
-    save_dir: Path = Path("models"),
+    save_path: Path | None = None,
 ) -> TraceEncoder:
     """
     Train the trace encoder with supervised cross-entropy classification.
 
-    Saves encoder backbone weights (NOT classification head) to save_dir.
+    Saves encoder backbone weights (NOT classification head) to
+    save_path, defaulting to CHECKPOINT_PATHS["trace"].
 
     Parameters
     ----------
@@ -451,8 +453,8 @@ def train(
         Random seed.
     device:
         Device string ("cpu" or "cuda").
-    save_dir:
-        Directory to save model weights.
+    save_path:
+        Path to save backbone weights. Defaults to CHECKPOINT_PATHS["trace"].
 
     Returns
     -------
@@ -616,16 +618,18 @@ def train(
             best_val_loss = avg_val_loss
             patience_counter = 0
             # Save best encoder backbone weights
-            save_dir.mkdir(parents=True, exist_ok=True)
-            save_path = save_dir / "trace_encoder.pt"
+            _save_path = (
+                save_path if save_path is not None else CHECKPOINT_PATHS["trace"]
+            )
+            _save_path.parent.mkdir(parents=True, exist_ok=True)
             # Save only backbone (exclude classification head)
             backbone_state = {
                 k: v
                 for k, v in encoder.state_dict().items()
                 if not k.startswith("classifier")
             }
-            torch.save(backbone_state, save_path)
-            logger.info("Saved best model to %s", save_path)
+            torch.save(backbone_state, _save_path)
+            logger.info("Saved best model to %s", _save_path)
         else:
             patience_counter += 1
             if patience_counter >= patience:

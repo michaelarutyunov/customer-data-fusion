@@ -21,13 +21,12 @@ import numpy as np
 import torch
 
 from evaluation.probe import pearson_r, probe_logistic_regression
-from schemas import PERSONA_TO_IDX
+from schemas import PERSONA_TO_IDX, CHECKPOINT_PATHS
 
 logger = logging.getLogger(__name__)
 
 DATA_DIR = Path("data/synthetic")
-MODEL_DIR = Path("models")
-TX_MODEL_PATH = MODEL_DIR / "transaction_encoder.pt"
+TX_MODEL_PATH = CHECKPOINT_PATHS["transaction"]
 
 
 def load_transaction_data(

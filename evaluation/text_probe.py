@@ -23,13 +23,12 @@ from evaluation.probe import (
     compute_cosine_similarity_stats,
     probe_logistic_regression,
 )
-from schemas import PERSONA_LABELS, PERSONA_TO_IDX
+from schemas import PERSONA_LABELS, PERSONA_TO_IDX, CHECKPOINT_PATHS
 
 logger = logging.getLogger(__name__)
 
 DATA_DIR = Path("data/synthetic")
-MODEL_DIR = Path("models")
-TEXT_MODEL_PATH = MODEL_DIR / "text_encoder.pt"
+TEXT_MODEL_PATH = CHECKPOINT_PATHS["text"]
 
 
 def load_narrative_data(

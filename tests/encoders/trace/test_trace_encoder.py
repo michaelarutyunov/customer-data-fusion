@@ -492,14 +492,14 @@ class TestTrainingLoop:
                 n_epochs=1,
                 seed=42,
                 device="cpu",
-                save_dir=traces_path.parent / "models",
+                save_path=traces_path.parent / "models" / "trace_encoder.pt",
             )
             assert isinstance(encoder, TraceEncoder)
 
     def test_train_saves_backbone_weights(self, tiny_dataset):
         """Saved model file exists and does NOT contain classifier weights."""
         traces_path, trials_path = tiny_dataset
-        save_dir = traces_path.parent / "models"
+        save_path = traces_path.parent / "models" / "trace_encoder.pt"
 
         import mlflow
 
@@ -510,10 +510,9 @@ class TestTrainingLoop:
                 batch_size=6,
                 n_epochs=1,
                 seed=42,
-                save_dir=save_dir,
+                save_path=save_path,
             )
 
-        save_path = save_dir / "trace_encoder.pt"
         assert save_path.exists(), "Model file should be saved"
 
         state_dict = torch.load(save_path, weights_only=True)
@@ -534,7 +533,7 @@ class TestTrainingLoop:
                 batch_size=6,
                 n_epochs=1,
                 seed=42,
-                save_dir=traces_path.parent / "models",
+                save_path=traces_path.parent / "models" / "trace_encoder.pt",
             )
 
         encoder.eval()
@@ -632,7 +631,7 @@ class TestSupervisedTrainingLoop:
                 batch_size=6,
                 n_epochs=1,
                 seed=42,
-                save_dir=traces_path.parent / "models",
+                save_path=traces_path.parent / "models" / "trace_encoder.pt",
             )
         assert isinstance(encoder, TraceEncoder)
 
@@ -648,7 +647,7 @@ class TestSupervisedTrainingLoop:
                 batch_size=6,
                 n_epochs=1,
                 seed=42,
-                save_dir=traces_path.parent / "models",
+                save_path=traces_path.parent / "models" / "trace_encoder.pt",
             )
             run_id = run.info.run_id
 
@@ -675,7 +674,7 @@ class TestSupervisedTrainingLoop:
                 batch_size=6,
                 n_epochs=5,
                 seed=42,
-                save_dir=traces_path.parent / "models",
+                save_path=traces_path.parent / "models" / "trace_encoder.pt",
             )
             run_id = run.info.run_id
 

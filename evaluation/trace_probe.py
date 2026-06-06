@@ -21,14 +21,13 @@ import numpy as np
 import torch
 
 from evaluation.probe import probe_logistic_regression, mean_pool_per_participant
-from schemas import PERSONA_LABELS, PERSONA_TO_IDX
+from schemas import PERSONA_LABELS, PERSONA_TO_IDX, CHECKPOINT_PATHS
 from schemas.trace import AcquisitionEvent, TrialRecord
 
 logger = logging.getLogger(__name__)
 
 DATA_DIR = Path("data/synthetic")
-MODEL_DIR = Path("models")
-TRACE_MODEL_PATH = MODEL_DIR / "trace_encoder.pt"
+TRACE_MODEL_PATH = CHECKPOINT_PATHS["trace"]
 
 
 def load_and_split_data(

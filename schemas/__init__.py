@@ -5,6 +5,8 @@ All modules import from here. Generator and encoders never import each other.
 Modifying any dataclass requires updating all downstream generators and encoders.
 """
 
+from pathlib import Path
+
 from schemas.persona import (
     PersonaConfig,
     StrategyParams,
@@ -38,9 +40,20 @@ PERSONA_LABELS: list[str] = [
 ]
 PERSONA_TO_IDX: dict[str, int] = {p: i for i, p in enumerate(PERSONA_LABELS)}
 
+# Canonical checkpoint paths for all modality encoders.
+# All encoder training scripts save to these paths; all probe/fusion scripts load from them.
+# Paths are relative to the repo root.
+CHECKPOINT_PATHS: dict[str, Path] = {
+    "trace": Path("models/trace_encoder.pt"),
+    "transaction": Path("models/transaction_encoder.pt"),
+    "text": Path("models/text_encoder.pt"),
+    "psychographic": Path("models/psychographic_encoder.pt"),
+}
+
 __all__ = [
     # Encoder contract
     "EMBEDDING_DIM",
+    "CHECKPOINT_PATHS",
     # Archetype labels
     "PERSONA_LABELS",
     "PERSONA_TO_IDX",

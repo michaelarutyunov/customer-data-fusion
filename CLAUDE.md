@@ -92,6 +92,10 @@ uv run mlflow ui                        # Launch experiment tracker
 bd ready                                # Check available tasks (Beads)
 ```
 
+> **Warning — long-running output:** `generator.pipeline` and encoder train scripts emit many log lines.
+> Pipe through `| tail -50` when running interactively to avoid flooding terminal/context.
+> Example: `uv run python -m generator.pipeline 2>&1 | tail -50`
+
 ---
 
 ## Shell Safety

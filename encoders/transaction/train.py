@@ -29,6 +29,7 @@ import torch.nn as nn
 from torch.nn.utils.rnn import pack_padded_sequence
 from torch.utils.data import DataLoader, Dataset
 
+from schemas import CHECKPOINT_PATHS
 from schemas.transaction import TransactionRecord
 from encoders.transaction.features import (
     MAX_SEQ_LEN,
@@ -442,10 +443,10 @@ def train(
         mlflow.pytorch.log_model(encoder, "transaction_encoder")
 
     # Save local checkpoint for probe evaluation
-    MODEL_DIR = Path("models")
-    MODEL_DIR.mkdir(parents=True, exist_ok=True)
-    torch.save(encoder.state_dict(), MODEL_DIR / "transaction_encoder.pt")
-    logger.info("Checkpoint saved to models/transaction_encoder.pt")
+    _save_path = CHECKPOINT_PATHS["transaction"]
+    _save_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(encoder.state_dict(), _save_path)
+    logger.info("Checkpoint saved to %s", _save_path)
 
     logger.info("Training complete. Best val loss: %.4f", best_val_loss)
     return encoder
