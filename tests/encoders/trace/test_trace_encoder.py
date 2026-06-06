@@ -29,6 +29,7 @@ from encoders.trace.tokeniser import (
 )
 from encoders.trace.train import (
     StratifiedSampler,
+    cross_entropy_loss,
     nt_xent_loss,
     train,
 )
@@ -546,3 +547,143 @@ class TestTrainingLoop:
             output = encoder(tokens, mask)
         assert output.shape == (2, EMBEDDING_DIM)
         assert torch.isfinite(output).all(), "Embeddings should be finite"
+
+
+# ---------------------------------------------------------------------------
+# Supervised cross-entropy loss tests
+# ---------------------------------------------------------------------------
+
+
+class TestCrossEntropyLoss:
+    def test_loss_is_non_negative(self):
+        logits = torch.randn(8, 7)
+        labels = torch.randint(0, 7, (8,))
+        loss = cross_entropy_loss(logits, labels)
+        assert loss.item() >= 0.0
+
+    def test_loss_is_differentiable(self):
+        logits = torch.randn(8, 7, requires_grad=True)
+        labels = torch.randint(0, 7, (8,))
+        loss = cross_entropy_loss(logits, labels)
+        loss.backward()
+        assert logits.grad is not None
+
+    def test_correct_predictions_lower_loss(self):
+        """Near-perfect logits produce lower loss than random logits."""
+        n, c = 8, 7
+        labels = torch.arange(n) % c
+        # Perfect logits: 10.0 on correct class
+        perfect = torch.zeros(n, c)
+        perfect[torch.arange(n), labels] = 10.0
+        loss_perfect = cross_entropy_loss(perfect, labels)
+
+        random_logits = torch.randn(n, c)
+        loss_random = cross_entropy_loss(random_logits, labels)
+
+        assert loss_perfect.item() < loss_random.item()
+
+
+# ---------------------------------------------------------------------------
+# Supervised training loop tests
+# ---------------------------------------------------------------------------
+
+
+class TestSupervisedTrainingLoop:
+    """Integration tests verifying train() uses cross-entropy as primary loss."""
+
+    @pytest.fixture
+    def tiny_dataset(self, tmp_path):
+        """Minimal JSONL fixtures — 3 personas, 4 trials each."""
+        import json
+        import mlflow
+
+        personas = ["compensatory", "satisficer", "brand_affect"]
+        all_events, all_trials = [], []
+        for p_idx, persona in enumerate(personas):
+            for trial_num in range(4):
+                pid = f"participant_{p_idx}"
+                tid = f"trial_{p_idx}_{trial_num}"
+                events, trial = _make_trial_events(
+                    trial_id=tid,
+                    participant_id=pid,
+                    persona_id=persona,
+                    n_events=3,
+                )
+                all_events.extend(events)
+                all_trials.append(trial)
+
+        traces_path = tmp_path / "traces.jsonl"
+        trials_path = tmp_path / "trials.jsonl"
+        traces_path.write_text("\n".join(json.dumps(e.__dict__) for e in all_events))
+        trials_path.write_text("\n".join(json.dumps(t.__dict__) for t in all_trials))
+
+        mlflow.set_tracking_uri(f"sqlite:///{tmp_path / 'mlflow.db'}")
+        return traces_path, trials_path
+
+    def test_train_completes_without_error(self, tiny_dataset):
+        """Supervised training loop runs 1 epoch with no exceptions."""
+        import mlflow
+
+        traces_path, trials_path = tiny_dataset
+        with mlflow.start_run(run_name="test_supervised"):
+            encoder = train(
+                traces_path=traces_path,
+                trials_path=trials_path,
+                batch_size=6,
+                n_epochs=1,
+                seed=42,
+                save_dir=traces_path.parent / "models",
+            )
+        assert isinstance(encoder, TraceEncoder)
+
+    def test_train_logs_cls_loss_not_contrastive(self, tiny_dataset):
+        """MLflow run should record cls_loss metric, not contrastive_loss."""
+        import mlflow
+
+        traces_path, trials_path = tiny_dataset
+        with mlflow.start_run(run_name="test_metrics") as run:
+            train(
+                traces_path=traces_path,
+                trials_path=trials_path,
+                batch_size=6,
+                n_epochs=1,
+                seed=42,
+                save_dir=traces_path.parent / "models",
+            )
+            run_id = run.info.run_id
+
+        client = mlflow.tracking.MlflowClient()
+        history_keys = set()
+        for key in ["train_cls_loss", "val_cls_loss", "train_contrastive_loss"]:
+            if client.get_metric_history(run_id, key):
+                history_keys.add(key)
+
+        assert "train_cls_loss" in history_keys, "train_cls_loss must be logged"
+        assert "train_contrastive_loss" not in history_keys, (
+            "contrastive loss must not be logged in supervised mode"
+        )
+
+    def test_loss_decreases_over_epochs(self, tiny_dataset):
+        """Training loss should decrease from epoch 1 to epoch 5 on tiny data."""
+        import mlflow
+
+        traces_path, trials_path = tiny_dataset
+        with mlflow.start_run(run_name="test_convergence") as run:
+            train(
+                traces_path=traces_path,
+                trials_path=trials_path,
+                batch_size=6,
+                n_epochs=5,
+                seed=42,
+                save_dir=traces_path.parent / "models",
+            )
+            run_id = run.info.run_id
+
+        client = mlflow.tracking.MlflowClient()
+        history = client.get_metric_history(run_id, "train_cls_loss")
+        assert len(history) >= 2
+        first_loss = history[0].value
+        last_loss = history[-1].value
+        assert last_loss < first_loss, (
+            f"Loss should decrease: first={first_loss:.4f}, last={last_loss:.4f}"
+        )

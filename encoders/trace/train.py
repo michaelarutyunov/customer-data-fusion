@@ -285,6 +285,11 @@ def nt_xent_loss(
     return loss
 
 
+def cross_entropy_loss(logits: Tensor, labels: Tensor) -> Tensor:
+    """Supervised cross-entropy loss for persona archetype classification."""
+    return F.cross_entropy(logits, labels)
+
+
 # ---------------------------------------------------------------------------
 # Data loading and splitting
 # ---------------------------------------------------------------------------
@@ -415,14 +420,12 @@ def train(
     lr: float = DEFAULT_LR,
     n_epochs: int = DEFAULT_EPOCHS,
     weight_decay: float = DEFAULT_WEIGHT_DECAY,
-    temperature: float = DEFAULT_TEMPERATURE,
-    aux_weight: float = DEFAULT_AUX_WEIGHT,
     seed: int = DEFAULT_SEED,
     device: str = "cpu",
     save_dir: Path = Path("models"),
 ) -> TraceEncoder:
     """
-    Train the trace encoder with NT-Xent contrastive + auxiliary classification.
+    Train the trace encoder with supervised cross-entropy classification.
 
     Saves encoder backbone weights (NOT classification head) to save_dir.
 
@@ -536,11 +539,10 @@ def train(
             "batch_size": batch_size,
             "n_epochs": n_epochs,
             "weight_decay": weight_decay,
-            "temperature": temperature,
-            "aux_weight": aux_weight,
             "n_classes": n_classes,
             "train_samples": len(train_dataset),
             "val_samples": len(val_dataset),
+            "objective": "supervised_cross_entropy",
         }
     )
 
@@ -554,76 +556,58 @@ def train(
 
         # --- Training ---
         encoder.train()
-        epoch_contrastive_loss = 0.0
         epoch_cls_loss = 0.0
-        epoch_total_loss = 0.0
         n_batches = 0
 
-        for tokens, mask, labels, persona_ids in train_loader:
+        for tokens, mask, labels, _ in train_loader:
             tokens = tokens.to(device)
             mask = mask.to(device)
             labels = labels.to(device)
 
             optimizer.zero_grad()
 
-            embeddings, logits = encoder.forward_with_logits(tokens, mask)
-
-            # NT-Xent contrastive loss
-            c_loss = nt_xent_loss(embeddings, persona_ids, temperature)
-
-            # Auxiliary classification loss
-            cls_loss = F.cross_entropy(logits, labels)
-
-            total_loss = c_loss + aux_weight * cls_loss
-            total_loss.backward()
+            _, logits = encoder.forward_with_logits(tokens, mask)
+            loss = cross_entropy_loss(logits, labels)
+            loss.backward()
             optimizer.step()
 
-            epoch_contrastive_loss += c_loss.item()
-            epoch_cls_loss += cls_loss.item()
-            epoch_total_loss += total_loss.item()
+            epoch_cls_loss += loss.item()
             n_batches += 1
 
-        avg_train_contrastive = epoch_contrastive_loss / max(n_batches, 1)
         avg_train_cls = epoch_cls_loss / max(n_batches, 1)
-        avg_train_total = epoch_total_loss / max(n_batches, 1)
 
         # --- Validation ---
         encoder.eval()
-        val_loss_total = 0.0
+        val_cls_loss = 0.0
         val_batches = 0
 
         with torch.no_grad():
-            for tokens, mask, labels, persona_ids in val_loader:
+            for tokens, mask, labels, _ in val_loader:
                 tokens = tokens.to(device)
                 mask = mask.to(device)
                 labels = labels.to(device)
 
-                embeddings, logits = encoder.forward_with_logits(tokens, mask)
+                _, logits = encoder.forward_with_logits(tokens, mask)
+                loss = cross_entropy_loss(logits, labels)
 
-                c_loss = nt_xent_loss(embeddings, persona_ids, temperature)
-                cls_loss = F.cross_entropy(logits, labels)
-                total_loss = c_loss + aux_weight * cls_loss
-
-                val_loss_total += total_loss.item()
+                val_cls_loss += loss.item()
                 val_batches += 1
 
-        avg_val_loss = val_loss_total / max(val_batches, 1)
+        avg_val_loss = val_cls_loss / max(val_batches, 1)
 
         mlflow.log_metrics(
             {
-                "train_contrastive_loss": avg_train_contrastive,
                 "train_cls_loss": avg_train_cls,
-                "train_total_loss": avg_train_total,
-                "val_total_loss": avg_val_loss,
+                "val_cls_loss": avg_val_loss,
             },
             step=epoch,
         )
 
         logger.info(
-            "Epoch %d/%d — train_loss=%.4f val_loss=%.4f",
+            "Epoch %d/%d — train_cls_loss=%.4f val_cls_loss=%.4f",
             epoch + 1,
             n_epochs,
-            avg_train_total,
+            avg_train_cls,
             avg_val_loss,
         )
 
