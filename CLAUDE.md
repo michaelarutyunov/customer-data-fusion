@@ -87,6 +87,7 @@ data/
 uv run python -m generator.pipeline     # Generate synthetic dataset
 uv run python -m encoders.trace.train   # Train trace encoder
 uv run pytest                           # Run test suite
+uv run python -m evaluation.run_probes  # Validate all 4 encoder probes (run after any encoder change)
 uv run mlflow ui                        # Launch experiment tracker
 bd ready                                # Check available tasks (Beads)
 ```

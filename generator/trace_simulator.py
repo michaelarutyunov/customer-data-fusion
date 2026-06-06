@@ -332,6 +332,7 @@ def simulate_session(
     config: PersonaConfig,
     category: str = "electronics",
     n_trials: int = 20,
+    participant_id: str | None = None,
 ) -> tuple[list[AcquisitionEvent], list[TrialRecord]]:
     """
     Simulate a MouseLab session for one participant.
@@ -345,6 +346,10 @@ def simulate_session(
         Product category label written to TrialRecord.category.
     n_trials:
         Number of trials in the session.
+    participant_id:
+        Unique participant identifier. Defaults to config.persona_id
+        (the archetype label) when None, preserving backward compatibility
+        with tests that don't pass explicit IDs.
 
     Returns
     -------
@@ -356,7 +361,8 @@ def simulate_session(
     rng = np.random.default_rng(config.random_seed)
 
     session_id = str(uuid.uuid4())
-    participant_id = config.persona_id
+    if participant_id is None:
+        participant_id = config.persona_id
     strategy_params = config.strategy
     primary_strategy = strategy_params.primary_strategy
     base_depth = strategy_params.inspection_depth

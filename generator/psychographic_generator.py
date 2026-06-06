@@ -61,6 +61,7 @@ def _noisy(rng: np.random.Generator, base: float, std_factor: float = 0.05) -> f
 def generate_psychographic(
     config: PersonaConfig,
     category: str = "electronics",
+    participant_id: str | None = None,
 ) -> PsychographicVector:
     """
     Generate a PsychographicVector from a PersonaConfig.
@@ -71,10 +72,15 @@ def generate_psychographic(
     Args:
         config: PersonaConfig archetype root.
         category: Product category for the vector.
+        participant_id: Unique participant identifier. Defaults to
+            config.persona_id (the archetype label) when None.
 
     Returns:
         PsychographicVector with all fields populated.
     """
+    if participant_id is None:
+        participant_id = config.persona_id
+
     rng = np.random.default_rng(config.random_seed)
 
     psych = config.psychographic
@@ -125,7 +131,7 @@ def generate_psychographic(
     )
 
     return PsychographicVector(
-        participant_id=config.persona_id,
+        participant_id=participant_id,
         persona_id=config.persona_id,
         involvement_score=involvement_score,
         maximiser_score=maximiser_score,

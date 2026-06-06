@@ -63,6 +63,7 @@ def run_pipeline(
     n_months: int = 12,
     output_dir: Path = _OUTPUT_DIR,
     skip_narratives: bool = False,
+    n_per_archetype: int | None = None,
 ) -> dict[str, int]:
     """
     Generate synthetic data for `n` participants.
@@ -85,6 +86,9 @@ def run_pipeline(
         Directory for JSONL outputs.
     skip_narratives:
         Skip LLM narrative generation (useful for fast dry-runs).
+    n_per_archetype:
+        If set, derives n = n_per_archetype * len(active_archetypes),
+        overriding the `n` argument. Produces a balanced dataset.
 
     Returns
     -------
@@ -94,6 +98,9 @@ def run_pipeline(
 
     all_archetypes = list_archetype_ids()
     active_archetypes = archetypes if archetypes else all_archetypes
+
+    if n_per_archetype is not None:
+        n = n_per_archetype * len(active_archetypes)
 
     handles = {
         "traces": open(output_dir / "traces.jsonl", "w"),
@@ -107,29 +114,47 @@ def run_pipeline(
     n_validation_failures = 0
 
     try:
+        per_archetype_counter: dict[str, int] = {a: 0 for a in active_archetypes}
         for i in range(n):
             archetype_id = active_archetypes[i % len(active_archetypes)]
             seed = base_seed + i
+            archetype_idx = per_archetype_counter[archetype_id]
+            participant_id = f"{archetype_id}_{archetype_idx:04d}"
+            per_archetype_counter[archetype_id] += 1
 
             config = sample_persona(archetype_id, random_seed=seed)
 
             events, trials = simulate_session(
-                config, category=category, n_trials=n_trials
+                config,
+                category=category,
+                n_trials=n_trials,
+                participant_id=participant_id,
             )
             transactions = simulate_transactions(
-                config, category=category, n_months=n_months
+                config,
+                category=category,
+                n_months=n_months,
+                participant_id=participant_id,
             )
-            psychographic = generate_psychographic(config, category=category)
+            psychographic = generate_psychographic(
+                config,
+                category=category,
+                participant_id=participant_id,
+            )
 
             if skip_narratives:
                 narrative = None
             else:
                 try:
-                    narrative = generate_narrative(config, category=category)
+                    narrative = generate_narrative(
+                        config,
+                        category=category,
+                        participant_id=participant_id,
+                    )
                 except Exception as exc:
                     log.warning(
                         "pipeline.narrative_failed",
-                        participant_id=config.persona_id,
+                        participant_id=participant_id,
                         archetype=archetype_id,
                         participant_index=i,
                         error=str(exc),
@@ -139,13 +164,18 @@ def run_pipeline(
 
             if narrative is not None:
                 report = validate_participant(
-                    config, trials, transactions, psychographic, narrative
+                    config,
+                    trials,
+                    transactions,
+                    psychographic,
+                    narrative,
+                    participant_id=participant_id,
                 )
                 if not report.passed:
                     n_validation_failures += 1
                     log.warning(
                         "pipeline.validation_failure",
-                        participant_id=config.persona_id,
+                        participant_id=participant_id,
                         archetype=archetype_id,
                         participant_index=i,
                         n_failures=len(report.failures),
@@ -170,6 +200,10 @@ def run_pipeline(
             if narrative is not None:
                 handles["narratives"].write(_to_json(narrative) + "\n")
                 counts["narratives"] += 1
+
+            # Flush after each participant so partial progress is visible on disk
+            for fh in handles.values():
+                fh.flush()
 
             if (i + 1) % 100 == 0:
                 log.info(
@@ -196,7 +230,12 @@ def run_pipeline(
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate CDT synthetic dataset")
-    parser.add_argument("--n", type=int, required=True, help="Number of participants")
+    parser.add_argument(
+        "--n",
+        type=int,
+        default=None,
+        help="Number of participants (required if --n-per-archetype not set)",
+    )
     parser.add_argument(
         "--archetypes",
         nargs="+",
@@ -218,13 +257,22 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Skip LLM narrative generation (for fast dry-runs)",
     )
+    parser.add_argument(
+        "--n-per-archetype",
+        type=int,
+        default=None,
+        help="Participants per archetype (e.g. 143 → 1001 total). Overrides --n.",
+    )
     return parser.parse_args(argv)
 
 
 if __name__ == "__main__":
     args = _parse_args()
+    if args.n is None and args.n_per_archetype is None:
+        print("Error: either --n or --n-per-archetype is required", file=sys.stderr)
+        sys.exit(2)
     counts = run_pipeline(
-        n=args.n,
+        n=args.n or 0,  # 0 when n_per_archetype derives n
         archetypes=args.archetypes,
         category=args.category,
         base_seed=args.seed,
@@ -232,6 +280,7 @@ if __name__ == "__main__":
         n_months=args.n_months,
         output_dir=args.output_dir,
         skip_narratives=args.skip_narratives,
+        n_per_archetype=args.n_per_archetype,
     )
     for modality, count in counts.items():
         print(f"  {modality}: {count} rows")

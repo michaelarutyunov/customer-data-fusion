@@ -52,14 +52,17 @@ def validate_participant(
     transactions: list[TransactionRecord],
     psychographic: PsychographicVector,
     narrative: PersonaNarrative,
+    participant_id: str | None = None,
 ) -> ValidationReport:
     """
     Run all 5 cross-modal consistency checks for one participant.
 
     Failures are logged at WARNING; the report is returned regardless.
     """
-    report = ValidationReport(participant_id=config.persona_id)
-    bound_log = log.bind(participant_id=config.persona_id, persona_id=config.persona_id)
+    if participant_id is None:
+        participant_id = config.persona_id
+    report = ValidationReport(participant_id=participant_id)
+    bound_log = log.bind(participant_id=participant_id, persona_id=config.persona_id)
 
     _check_price_consciousness(config, psychographic, transactions, report, bound_log)
     _check_brand_sensitivity(config, psychographic, transactions, report, bound_log)

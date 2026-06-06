@@ -4,10 +4,23 @@ Unified probe runner — evaluates all 4 encoders with logistic regression probe
 Since the synthetic data has 7 participants (one per persona archetype) with
 many records each, probes use record-level stratified train/test splits.
 Results are logged to MLflow.
+
+Usage:
+    PYTHONPATH=. uv run python -m evaluation.run_probes
+    PYTHONPATH=. uv run python -m evaluation.run_probes --device cuda
+
+Expected thresholds (from szm.10–szm.13):
+    trace:         > 85% strategy recovery
+    transaction:   > 60% strategy recovery
+    text:          > 70% strategy recovery
+    psychographic: > 75% strategy recovery
+
+Exit code: 0 if all thresholds met, 1 otherwise or on error.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import logging
 import sys
@@ -17,25 +30,19 @@ from pathlib import Path
 import mlflow
 import numpy as np
 import torch
+from dotenv import load_dotenv
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
 from sklearn.model_selection import StratifiedShuffleSplit
 from sklearn.preprocessing import StandardScaler
 
+from schemas import PERSONA_LABELS, PERSONA_TO_IDX
+
+load_dotenv()
+
 logger = logging.getLogger(__name__)
 
 DATA_DIR = Path("data/synthetic")
-
-PERSONA_LABELS = [
-    "price_lex",
-    "quality_lex",
-    "compensatory",
-    "satisficer",
-    "brand_affect",
-    "adaptive",
-    "low_involve",
-]
-PERSONA_TO_IDX = {p: i for i, p in enumerate(PERSONA_LABELS)}
 
 
 def probe_with_sklearn(
@@ -436,19 +443,41 @@ def probe_psychographic(device: str = "cpu") -> dict:
 # ---------------------------------------------------------------------------
 
 
-def main() -> None:
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(
+        description="Run all 4 encoder probes and report strategy recovery."
+    )
+    parser.add_argument(
+        "--device",
+        default="cuda" if torch.cuda.is_available() else "cpu",
+        help="Device to run on (default: cuda if available, else cpu)",
+    )
+    parser.add_argument(
+        "--probe",
+        choices=["trace", "transaction", "text", "psychographic"],
+        default=None,
+        help="Run a single probe instead of all 4",
+    )
+    args = parser.parse_args(argv)
+
+    device = args.device
     logger.info("Device: %s", device)
 
     results: dict[str, dict] = {}
 
-    # Run all probes
-    for name, probe_fn in [
+    # Run all probes (or a single one)
+    probe_registry = [
         ("trace", probe_trace),
         ("transaction", probe_transaction),
         ("text", probe_text),
         ("psychographic", probe_psychographic),
-    ]:
+    ]
+    if args.probe:
+        probe_registry = [
+            (args.probe, fn) for name, fn in probe_registry if name == args.probe
+        ]
+
+    for name, probe_fn in probe_registry:
         logger.info("\n" + "=" * 60)
         logger.info("Running %s probe...", name)
         logger.info("=" * 60)
@@ -491,4 +520,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    main()
+    main(sys.argv[1:])

@@ -24,9 +24,26 @@ from schemas.psychographic import PsychographicVector
 # Changing this requires retraining all encoders and the fusion layer.
 EMBEDDING_DIM: int = 128
 
+# Must match archetypes defined in config/personas.yaml.
+# Adding an archetype is a deliberate schema change — update both this list
+# and personas.yaml together.
+PERSONA_LABELS: list[str] = [
+    "price_lex",
+    "quality_lex",
+    "compensatory",
+    "satisficer",
+    "brand_affect",
+    "adaptive",
+    "low_involve",
+]
+PERSONA_TO_IDX: dict[str, int] = {p: i for i, p in enumerate(PERSONA_LABELS)}
+
 __all__ = [
     # Encoder contract
     "EMBEDDING_DIM",
+    # Archetype labels
+    "PERSONA_LABELS",
+    "PERSONA_TO_IDX",
     # Persona (generative root)
     "PersonaConfig",
     "StrategyParams",

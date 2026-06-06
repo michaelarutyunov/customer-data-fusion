@@ -36,7 +36,7 @@ log = structlog.get_logger()
 _YAML_PATH = Path(__file__).parent.parent / "config" / "personas.yaml"
 
 # Per-participant noise scale (fraction of base value as std dev)
-_NOISE_SCALE = 0.05
+_NOISE_SCALE = 0.15
 
 
 @lru_cache(maxsize=1)

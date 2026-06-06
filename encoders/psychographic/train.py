@@ -19,7 +19,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 import mlflow
 
-from schemas import EMBEDDING_DIM
+from schemas import EMBEDDING_DIM, PERSONA_LABELS, PERSONA_TO_IDX
 from schemas.psychographic import PsychographicVector
 
 from encoders.psychographic.features import (
@@ -27,22 +27,6 @@ from encoders.psychographic.features import (
     save_vocab,
 )
 from encoders.psychographic.model import PsychographicEncoder
-
-# ---------------------------------------------------------------------------
-# Persona-id to integer label mapping
-# ---------------------------------------------------------------------------
-
-PERSONA_LABELS: list[str] = [
-    "price_lex",
-    "compensatory",
-    "satisficer",
-    "brand_affect",
-    "quality_lex",
-    "adaptive",
-    "low_involve",
-]
-
-PERSONA_TO_IDX: dict[str, int] = {p: i for i, p in enumerate(PERSONA_LABELS)}
 
 
 # ---------------------------------------------------------------------------

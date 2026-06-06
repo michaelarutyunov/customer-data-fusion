@@ -290,13 +290,14 @@ class TestNarrativeResilience:
 
         call_count = 0
 
-        def flaky_generate(config, category="electronics"):
+        def flaky_generate(config, category="electronics", participant_id=None):
             nonlocal call_count
             call_count += 1
             if call_count == 2:
                 raise RuntimeError("transient API error")
+            pid = participant_id if participant_id is not None else config.persona_id
             return PersonaNarrative(
-                participant_id=config.persona_id,
+                participant_id=pid,
                 persona_id=config.persona_id,
                 category=category,
                 text="word " * 280,

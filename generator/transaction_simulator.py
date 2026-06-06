@@ -79,6 +79,7 @@ def simulate_transactions(
     config: PersonaConfig,
     category: str = "electronics",
     n_months: int = 12,
+    participant_id: str | None = None,
 ) -> list[TransactionRecord]:
     """
     Generate a synthetic 12-month purchase history for one participant.
@@ -91,11 +92,17 @@ def simulate_transactions(
         Product category string embedded in each TransactionRecord.
     n_months:
         Lookback window in months; default 12.
+    participant_id:
+        Unique participant identifier. Defaults to config.persona_id
+        (the archetype label) when None.
 
     Returns
     -------
     List of TransactionRecord instances, one per simulated purchase event.
     """
+    if participant_id is None:
+        participant_id = config.persona_id
+
     rng = np.random.default_rng(config.random_seed)
     params = config.transactions
 
@@ -129,8 +136,8 @@ def simulate_transactions(
 
         records.append(
             TransactionRecord(
-                participant_id=config.persona_id,
-                transaction_id=f"tx_{config.persona_id}_{i:04d}",
+                participant_id=participant_id,
+                transaction_id=f"tx_{participant_id}_{i:04d}",
                 days_before_session=days_before,
                 category=category,
                 product_id=product_id,

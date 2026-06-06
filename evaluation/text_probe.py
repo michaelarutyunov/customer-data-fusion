@@ -23,23 +23,13 @@ from evaluation.probe import (
     compute_cosine_similarity_stats,
     probe_logistic_regression,
 )
+from schemas import PERSONA_LABELS, PERSONA_TO_IDX
 
 logger = logging.getLogger(__name__)
 
 DATA_DIR = Path("data/synthetic")
 MODEL_DIR = Path("models")
 TEXT_MODEL_PATH = MODEL_DIR / "text_encoder.pt"
-
-PERSONA_LABELS = [
-    "price_lex",
-    "compensatory",
-    "satisficer",
-    "brand_affect",
-    "quality_lex",
-    "adaptive",
-    "low_involve",
-]
-PERSONA_TO_IDX = {p: i for i, p in enumerate(PERSONA_LABELS)}
 
 
 def load_narrative_data(

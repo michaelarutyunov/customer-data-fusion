@@ -19,23 +19,13 @@ import numpy as np
 import torch
 
 from evaluation.probe import probe_logistic_regression
+from schemas import PERSONA_TO_IDX
 
 logger = logging.getLogger(__name__)
 
 DATA_DIR = Path("data/synthetic")
 MODEL_DIR = Path("models")
 PSYCHO_MODEL_PATH = MODEL_DIR / "psychographic_encoder.pt"
-
-PERSONA_LABELS = [
-    "price_lex",
-    "compensatory",
-    "satisficer",
-    "brand_affect",
-    "quality_lex",
-    "adaptive",
-    "low_involve",
-]
-PERSONA_TO_IDX = {p: i for i, p in enumerate(PERSONA_LABELS)}
 
 
 def load_psychographic_data(

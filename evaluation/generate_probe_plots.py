@@ -22,22 +22,13 @@ from sklearn.metrics import ConfusionMatrixDisplay, accuracy_score
 from sklearn.model_selection import StratifiedShuffleSplit
 from sklearn.preprocessing import StandardScaler
 
+from schemas import PERSONA_LABELS, PERSONA_TO_IDX
+
 logger = logging.getLogger(__name__)
 
 DATA_DIR = Path("data/synthetic")
 OUTPUT_DIR = Path("notebooks")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
-PERSONA_LABELS = [
-    "price_lex",
-    "quality_lex",
-    "compensatory",
-    "satisficer",
-    "brand_affect",
-    "adaptive",
-    "low_involve",
-]
-PERSONA_TO_IDX = {p: i for i, p in enumerate(PERSONA_LABELS)}
 
 COLORS = plt.cm.tab10(np.linspace(0, 1, 7))
 
@@ -55,8 +46,13 @@ def generate_text_embeddings() -> tuple[np.ndarray, np.ndarray]:
     ]
 
     logger.info("Training text encoder for plot generation...")
-    encoder = train_text(narratives=narratives, n_epochs=20, batch_size=64,
-                         device="cpu", log_mlflow=False)
+    encoder = train_text(
+        narratives=narratives,
+        n_epochs=20,
+        batch_size=64,
+        device="cpu",
+        log_mlflow=False,
+    )
     encoder.eval()
 
     texts = [n.text for n in narratives]
@@ -83,8 +79,9 @@ def generate_psychographic_embeddings() -> tuple[np.ndarray, np.ndarray]:
     ]
 
     logger.info("Training psychographic encoder for plot generation...")
-    encoder = train_psycho(records=records, n_epochs=40, batch_size=128,
-                           device="cpu", log_mlflow=False)
+    encoder = train_psycho(
+        records=records, n_epochs=40, batch_size=128, device="cpu", log_mlflow=False
+    )
     encoder.eval()
 
     embs, lbls = [], []
@@ -127,12 +124,8 @@ def generate_trace_embeddings() -> tuple[np.ndarray, np.ndarray]:
         events_by_trial[ev.trial_id].append(ev)
 
     vocab = build_vocab(events)
-    n_attributes = max(
-        len(vocab.get("attribute", {})), 1
-    ) + 1
-    n_alternatives = max(
-        len(vocab.get("alternative", {})), 1
-    ) + 1
+    n_attributes = max(len(vocab.get("attribute", {})), 1) + 1
+    n_alternatives = max(len(vocab.get("alternative", {})), 1) + 1
 
     model_path = Path("models/trace_encoder.pt")
     if model_path.exists():
@@ -148,6 +141,7 @@ def generate_trace_embeddings() -> tuple[np.ndarray, np.ndarray]:
         logger.info("Training trace encoder from scratch...")
         from encoders.trace.train import train as train_trace
         import mlflow
+
         with mlflow.start_run(run_name="trace_plot_gen"):
             mlflow.set_tag("modality", "trace")
             encoder = train_trace(device="cpu", n_epochs=30, seed=42)
@@ -170,10 +164,13 @@ def generate_trace_embeddings() -> tuple[np.ndarray, np.ndarray]:
     return np.stack(embs), np.array(lbls)
 
 
-def plot_umap(embeddings: np.ndarray, labels: np.ndarray, title: str, filename: str) -> None:
+def plot_umap(
+    embeddings: np.ndarray, labels: np.ndarray, title: str, filename: str
+) -> None:
     """Generate and save a UMAP 2D projection plot."""
     try:
         import umap
+
         reducer = umap.UMAP(n_components=2, random_state=42, n_jobs=1)
         proj = reducer.fit_transform(embeddings)
     except ImportError:
@@ -183,8 +180,9 @@ def plot_umap(embeddings: np.ndarray, labels: np.ndarray, title: str, filename: 
     fig, ax = plt.subplots(figsize=(10, 8))
     for i, name in enumerate(PERSONA_LABELS):
         mask = labels == i
-        ax.scatter(proj[mask, 0], proj[mask, 1], c=[COLORS[i]], label=name,
-                   s=8, alpha=0.6)
+        ax.scatter(
+            proj[mask, 0], proj[mask, 1], c=[COLORS[i]], label=name, s=8, alpha=0.6
+        )
 
     ax.set_title(f"UMAP Projection — {title}", fontsize=14)
     ax.legend(markerscale=3, fontsize=9, loc="lower left")
@@ -205,19 +203,33 @@ def plot_strategy_recovery(results: dict[str, float], filename: str) -> None:
 
     # Add threshold lines
     thresholds = {
-        "trace": 0.85, "transaction": 0.60, "text": 0.70, "psychographic": 0.75
+        "trace": 0.85,
+        "transaction": 0.60,
+        "text": 0.70,
+        "psychographic": 0.75,
     }
     for i, name in enumerate(names):
         if name in thresholds:
-            ax.axhline(y=thresholds[name], xmin=i/len(names),
-                       xmax=(i+1)/len(names), color="red", linestyle="--", linewidth=1.5)
+            ax.axhline(
+                y=thresholds[name],
+                xmin=i / len(names),
+                xmax=(i + 1) / len(names),
+                color="red",
+                linestyle="--",
+                linewidth=1.5,
+            )
 
     ax.set_ylabel("Strategy Recovery Accuracy")
     ax.set_title("Strategy Recovery by Encoder Modality")
     ax.set_ylim(0, 1.1)
     for bar, val in zip(bars, values):
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.02,
-                f"{val:.1%}", ha="center", fontsize=11)
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.02,
+            f"{val:.1%}",
+            ha="center",
+            fontsize=11,
+        )
     fig.tight_layout()
     fig.savefig(OUTPUT_DIR / filename, dpi=150)
     plt.close(fig)
@@ -245,8 +257,12 @@ def plot_confusion_matrix(
 
     fig, ax = plt.subplots(figsize=(9, 8))
     ConfusionMatrixDisplay.from_predictions(
-        y_val, y_pred, display_labels=PERSONA_LABELS,
-        xticks_rotation=45, ax=ax, colorbar=False
+        y_val,
+        y_pred,
+        display_labels=PERSONA_LABELS,
+        xticks_rotation=45,
+        ax=ax,
+        colorbar=False,
     )
     ax.set_title(f"{title} (Accuracy: {acc:.1%})")
     fig.tight_layout()
@@ -260,19 +276,43 @@ def main() -> None:
 
     # Text embeddings
     text_embs, text_labels = generate_text_embeddings()
-    plot_umap(text_embs, text_labels, "Text Encoder (sentence-transformer + projection)", "text_umap.png")
-    plot_confusion_matrix(text_embs, text_labels, "Text Encoder Confusion Matrix", "text_confusion.png")
+    plot_umap(
+        text_embs,
+        text_labels,
+        "Text Encoder (sentence-transformer + projection)",
+        "text_umap.png",
+    )
+    plot_confusion_matrix(
+        text_embs, text_labels, "Text Encoder Confusion Matrix", "text_confusion.png"
+    )
 
     # Psychographic embeddings
     psycho_embs, psycho_labels = generate_psychographic_embeddings()
-    plot_umap(psycho_embs, psycho_labels, "Psychographic Encoder (MLP)", "psycho_umap.png")
-    plot_confusion_matrix(psycho_embs, psycho_labels, "Psychographic Encoder Confusion Matrix", "psycho_confusion.png")
+    plot_umap(
+        psycho_embs, psycho_labels, "Psychographic Encoder (MLP)", "psycho_umap.png"
+    )
+    plot_confusion_matrix(
+        psycho_embs,
+        psycho_labels,
+        "Psychographic Encoder Confusion Matrix",
+        "psycho_confusion.png",
+    )
 
     # Trace embeddings (from checkpoint if available)
     try:
         trace_embs, trace_labels = generate_trace_embeddings()
-        plot_umap(trace_embs, trace_labels, "Trace Encoder (Transformer Contrastive)", "trace_umap.png")
-        plot_confusion_matrix(trace_embs, trace_labels, "Trace Encoder Confusion Matrix", "trace_confusion.png")
+        plot_umap(
+            trace_embs,
+            trace_labels,
+            "Trace Encoder (Transformer Contrastive)",
+            "trace_umap.png",
+        )
+        plot_confusion_matrix(
+            trace_embs,
+            trace_labels,
+            "Trace Encoder Confusion Matrix",
+            "trace_confusion.png",
+        )
     except Exception as e:
         logger.warning("Trace encoder plots skipped: %s", e)
 
@@ -288,7 +328,10 @@ def main() -> None:
 
     # Cosine similarity heatmap for text encoder
     from evaluation.probe import compute_cosine_similarity_stats
-    cos_sim = compute_cosine_similarity_stats(text_embs, text_labels, label_names=PERSONA_LABELS)
+
+    cos_sim = compute_cosine_similarity_stats(
+        text_embs, text_labels, label_names=PERSONA_LABELS
+    )
 
     fig, ax = plt.subplots(figsize=(9, 8))
     im = ax.imshow(cos_sim["pairwise_matrix"], cmap="RdYlBu_r", vmin=-0.2, vmax=0.8)

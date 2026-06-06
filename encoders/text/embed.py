@@ -27,7 +27,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 import mlflow
 
-from schemas import EMBEDDING_DIM
+from schemas import EMBEDDING_DIM, PERSONA_LABELS, PERSONA_TO_IDX
 from schemas.text import PersonaNarrative
 
 # ---------------------------------------------------------------------------
@@ -36,18 +36,6 @@ from schemas.text import PersonaNarrative
 
 SENTENCE_TRANSFORMER_MODEL = "all-MiniLM-L6-v2"
 SENTENCE_DIM = 384  # all-MiniLM-L6-v2 output dimension
-
-PERSONA_LABELS: list[str] = [
-    "price_lex",
-    "compensatory",
-    "satisficer",
-    "brand_affect",
-    "quality_lex",
-    "adaptive",
-    "low_involve",
-]
-
-PERSONA_TO_IDX: dict[str, int] = {p: i for i, p in enumerate(PERSONA_LABELS)}
 
 DATA_DIR = Path("data/synthetic")
 

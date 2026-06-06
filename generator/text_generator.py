@@ -97,8 +97,11 @@ def _llm_generate(prompt: str) -> tuple[str, str]:
 def generate_narrative(
     config: PersonaConfig,
     category: str = "electronics",
+    participant_id: str | None = None,
 ) -> PersonaNarrative:
     """Generate one persona narrative from a PersonaConfig."""
+    if participant_id is None:
+        participant_id = config.persona_id
     prompt = _build_prompt(config, category)
     text, model_id = _llm_generate(prompt)
     word_count = len(text.split())
@@ -119,7 +122,7 @@ def generate_narrative(
     )
 
     return PersonaNarrative(
-        participant_id=config.persona_id,
+        participant_id=participant_id,
         persona_id=config.persona_id,
         category=category,
         text=text,
@@ -134,9 +137,20 @@ def generate_narrative(
 def generate_narratives_batch(
     configs: list[PersonaConfig],
     category: str = "electronics",
+    participant_ids: list[str] | None = None,
 ) -> list[PersonaNarrative]:
-    """Generate narratives for a list of configs sequentially."""
+    """Generate narratives for a list of configs sequentially.
+
+    Args:
+        configs: PersonaConfig instances, one per participant.
+        category: Product category string.
+        participant_ids: Unique IDs matching configs 1:1. Defaults to
+            config.persona_id per config when None.
+    """
     results: list[PersonaNarrative] = []
-    for config in configs:
-        results.append(generate_narrative(config, category=category))
+    for i, config in enumerate(configs):
+        pid = participant_ids[i] if participant_ids else None
+        results.append(
+            generate_narrative(config, category=category, participant_id=pid)
+        )
     return results

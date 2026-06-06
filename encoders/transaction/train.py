@@ -82,7 +82,7 @@ class TransactionSequenceDataset(Dataset):
             by_participant[r.participant_id].append(r)
 
         self.sequences: list[tuple[torch.Tensor, torch.Tensor, int]] = []
-        for pid, txs in by_participant.items():
+        for _, txs in by_participant.items():
             txs = sort_transactions_most_recent_first(txs)[:max_seq_len]
 
             # Build brand_tier target indices for all records
@@ -102,7 +102,10 @@ class TransactionSequenceDataset(Dataset):
             token_seq = vocab.encode_sequence(input_txs)  # (T, 20)
             target_tensor = torch.tensor(targets, dtype=torch.long)
 
-            self.sequences.append((token_seq, target_tensor, len(input_txs)))
+            # Detach — dataset tensors must not carry gradient history.
+            # token_seq inherits requires_grad=True from vocab embedding
+            # lookups, which causes "double backward" errors across epochs.
+            self.sequences.append((token_seq.detach(), target_tensor, len(input_txs)))
 
     def __len__(self) -> int:
         return len(self.sequences)
@@ -396,6 +399,7 @@ def train(
         )
 
         best_val_loss = float("inf")
+        best_state = None
         patience_counter = 0
 
         for epoch in range(n_epochs):
@@ -431,11 +435,17 @@ def train(
                     break
 
         # Restore best weights
-        if "best_state" in dir():
+        if best_state is not None:
             encoder.load_state_dict(best_state["encoder"])
 
         mlflow.log_metric("best_val_loss", best_val_loss)
         mlflow.pytorch.log_model(encoder, "transaction_encoder")
+
+    # Save local checkpoint for probe evaluation
+    MODEL_DIR = Path("models")
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    torch.save(encoder.state_dict(), MODEL_DIR / "transaction_encoder.pt")
+    logger.info("Checkpoint saved to models/transaction_encoder.pt")
 
     logger.info("Training complete. Best val loss: %.4f", best_val_loss)
     return encoder
