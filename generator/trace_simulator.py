@@ -198,14 +198,20 @@ def _simulate_lexicographic(
     n_target: int,
 ) -> list[tuple[str, str]]:
     """
-    Dimensional attribute-wise scan: primarily moves dimensionally (same attr,
-    diff alt), with occasional holistic follow-ups.
+    Price-lexicographic: inspect only the key attribute across all alternatives
+    in random order, then stop.
 
-    Target PI: -0.6 to -0.8 → p_dimensional = 0.87
-    Target prop_cells: 0.15-0.30 (SHALLOW depth handles this via n_target).
+    Target PI: ≈ -1.0 (pure dimensional — same attr, all alts)
+    Target prop_cells: 1/n_attrs (exactly one column)
     """
-    # p_dimensional = 0.82 → expected PI ≈ 1 - 2*0.82 = -0.64 (mid-range of -0.6/-0.8)
-    return _build_mixed_sequence(rng, alts, attrs, n_target, p_dimensional=0.82)
+    key_attr = (
+        params.first_attribute
+        if (params.first_attribute and params.first_attribute in attrs)
+        else attrs[0]
+    )
+    alt_order = list(alts)
+    rng.shuffle(alt_order)
+    return [(alt, key_attr) for alt in alt_order]
 
 
 def _simulate_compensatory(
@@ -401,7 +407,7 @@ def simulate_session(
             strategy_params,
             effective_depth,
             time_pressure,
-            persona_id=participant_id,
+            persona_id=config.persona_id,
         )
 
         # Build AcquisitionEvent objects

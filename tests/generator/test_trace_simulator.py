@@ -179,8 +179,10 @@ class TestSimulateSessionAPI:
         )
         _, t1 = simulate_session(c1, n_trials=5)
         _, t2 = simulate_session(c2, n_trials=5)
-        # At least one trial should differ
-        assert any(t1[i].payne_index != t2[i].payne_index for i in range(5))
+        # Different seeds → different board sizes (n_alts from {3,5,7})
+        assert any(
+            t1[i].total_acquisitions != t2[i].total_acquisitions for i in range(5)
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -377,21 +379,61 @@ class TestPayneIndex:
 N_CALIBRATION_TRIALS = 60
 
 
+class TestPriceLexSelectiveInspection:
+    """price_lex must inspect only the price column — no other attributes."""
+
+    @pytest.fixture
+    def price_lex_no_lapse(self):
+        return _make_config(
+            "price_lex",
+            _make_strategy(
+                Strategy.LEXICOGRAPHIC,
+                InspectionDepth.SHALLOW,
+                first_attribute="price",
+                p_strategy_lapse=0.0,
+            ),
+        )
+
+    def test_only_price_attribute_inspected(self, price_lex_no_lapse):
+        events, _ = simulate_session(price_lex_no_lapse, n_trials=20)
+        non_price = [e for e in events if e.attribute_id != "price"]
+        assert len(non_price) == 0, (
+            f"price_lex inspected non-price attributes: "
+            f"{set(e.attribute_id for e in non_price)}"
+        )
+
+    def test_payne_index_is_minus_one_without_lapses(self, price_lex_no_lapse):
+        _, trials = simulate_session(price_lex_no_lapse, n_trials=20)
+        for t in trials:
+            if t.total_acquisitions >= 2:
+                assert t.payne_index == pytest.approx(-1.0), (
+                    f"Trial PI={t.payne_index:.3f}, expected -1.0 (pure dimensional)"
+                )
+
+    def test_prop_cells_equals_one_over_n_attrs(self, price_lex_no_lapse):
+        _, trials = simulate_session(price_lex_no_lapse, n_trials=40)
+        for t in trials:
+            expected = 1.0 / t.n_attributes
+            assert abs(t.prop_cells_inspected - expected) <= 0.05, (
+                f"prop={t.prop_cells_inspected:.3f}, expected ≈{expected:.3f} (1/n_attrs)"
+            )
+
+
 class TestCalibrationPriceLex:
-    """price_lex: PI -0.6 to -0.8, prop_cells 0.15-0.30."""
+    """price_lex: PI -1.0 to -0.80 (near-pure dimensional), prop_cells 0.10-0.30."""
 
     def test_payne_index_range(self, price_lex_config):
         _, trials = simulate_session(price_lex_config, n_trials=N_CALIBRATION_TRIALS)
         median_pi = float(np.median([t.payne_index for t in trials]))
-        assert -0.8 <= median_pi <= -0.6, (
-            f"price_lex PI median={median_pi:.3f} not in [-0.8, -0.6]"
+        assert -1.0 <= median_pi <= -0.80, (
+            f"price_lex PI median={median_pi:.3f} not in [-1.0, -0.80]"
         )
 
     def test_prop_cells_range(self, price_lex_config):
         _, trials = simulate_session(price_lex_config, n_trials=N_CALIBRATION_TRIALS)
         median_prop = float(np.median([t.prop_cells_inspected for t in trials]))
-        assert 0.15 <= median_prop <= 0.30, (
-            f"price_lex prop_cells median={median_prop:.3f} not in [0.15, 0.30]"
+        assert 0.10 <= median_prop <= 0.30, (
+            f"price_lex prop_cells median={median_prop:.3f} not in [0.10, 0.30]"
         )
 
 
