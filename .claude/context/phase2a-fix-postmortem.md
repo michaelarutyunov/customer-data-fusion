@@ -58,14 +58,16 @@
 
 All 7 archetypes have exactly 143 participants each. Participant IDs follow the pattern `{archetype}_{0000-0142}` with per-archetype indexing. Validation failures: 0.
 
-### Probe Results (1001-participant dataset)
+### Probe Results (1001-participant dataset, after wva fix)
 
-| Encoder | Strategy Recovery | Threshold | Attempts | Pass? |
-|---------|------------------|-----------|----------|-------|
-| Psychographic | 100.00% ± 0.00% | >75% | 1 | ✅ |
-| Text | 100.00% ± 0.00% | >70% | 1 | ✅ |
-| Transaction | 62.59% ± 2.43% | >60% | 1 | ✅ |
-| Trace | 35.57% ± 0.61% | >85% | 2 | ❌ |
+| Encoder | Strategy Recovery | Threshold | Pass? |
+|---------|------------------|-----------|-------|
+| Psychographic | 100.00% ± 0.00% | >75% | ✅ |
+| Text | 100.00% ± 0.00% | >70% | ✅ |
+| Transaction | 62.59% ± 2.43% | >60% | ✅ |
+| Trace | **95.02%** | >85% | ✅ |
+
+Pre-fix trace result was 35.57% (NT-Xent) and 37.25% (cross-entropy). Root cause was a generator bug, not the objective — see G3.
 
 Transaction encoder additional metrics: Pearson r(price × consciousness) = -0.8876. Text encoder additional metrics: intra-persona cosine sim 0.71 (>0.6 ✅), inter-persona cosine sim -0.10 (<0.4 ✅).
 
@@ -154,12 +156,18 @@ The `2>&1 | tail -N` pipe was a contributing factor: when `tail` exits after rec
 
 **Fix** (deferred): Investigate whether `uv run` injects environment variables from `pyproject.toml` or whether a parent-directory `.env` file takes precedence. Consider using `load_dotenv(override=True)` or a centralized config loader that reads `.env` once at project import time.
 
-### G3 — Trace encoder contrastive objective not viable at scale
-**Gap**: The Phase 2a post-mortem (R3) hypothesized that the 35.57% trace recovery was due to only 7 participants. The kpn fix increased to 1001 participants, but trace recovery is unchanged at 35.57% (2 training runs, identical results). The NT-Xent contrastive loss fundamentally cannot separate the 7 archetypes from process trace data, regardless of participant count.
+### G3 — Trace encoder probe blocked by generator flaw, not objective — RESOLVED
+**Gap (original)**: The Phase 2a post-mortem (R3) hypothesized that the 35.57% trace recovery was due to only 7 participants. The kpn fix increased to 1001 participants, but trace recovery was unchanged at 35.57%.
 
-**Status**: Confirmed as a fundamental limitation of the objective, not a data diversity issue. The psychographic encoder's supervised classification achieves 100% on the same 7-class problem, confirming the classes are separable — just not via contrastive learning on trace sequences.
+**Investigation chain (2026-06-06/07)**:
+1. Bead `6yl`: replaced NT-Xent with supervised cross-entropy → 37.25% (no improvement). Objective was not the bottleneck.
+2. Scalar probe diagnostic: mean-pooled `prop_cells_inspected`, `total_acquisitions`, `payne_index` per participant → **63% ceiling**. `price_lex` achieved 0% recall even from gold scalars.
+3. Root cause: `_simulate_lexicographic` used `_build_mixed_sequence(p_dimensional=0.82)` — biased transitions but sampled all attributes. `price_lex` was indistinguishable from other archetypes in trace scalar space.
+4. Secondary bug: `simulate_session` passed `participant_id` (e.g., `"price_lex_0042"`) as `persona_id` to `_generate_sequence`. `_ARCHETYPE_DEPTH_FRACTION` uses archetype keys — overrides never fired.
+5. Bead `wva`: fixed both bugs. `_simulate_lexicographic` now scans only the `first_attribute` column (PI = -1.0, prop = 1/n_attrs). Extended scalar probe with attribute-frequency features → **91.5% ceiling**.
+6. Retrained trace encoder → **95.02% strategy recovery**. All 7 archetypes pass ≥80%.
 
-**Fix**: Bead `6yl` created — implement supervised classification objective for trace encoder (R3 alternative from Phase 2a post-mortem).
+**Status**: Resolved. Trace encoder probe result: 95.02% (was 35.57%).
 
 ---
 
@@ -207,8 +215,8 @@ self.sequences.append((token_seq.detach(), target_tensor, len(input_txs)))
 
 ## 7. Recommendations for Phase 2b
 
-### R1 — Implement supervised trace encoder objective before fusion (bead `6yl`)
-The contrastive NT-Xent objective is confirmed non-viable for the 7-archetype classification problem. The psychographic encoder's 100% recovery with supervised cross-entropy is the pattern to follow. The trace encoder architecture (transformer → mean pool → projection) can be reused; only the training objective changes.
+### R1 — ✅ COMPLETE: Supervised trace encoder objective + generator fix
+NT-Xent replaced with cross-entropy (bead `6yl`). Generator price_lex bug fixed (bead `wva`). All 4 encoders now pass their thresholds. Trace encoder: 95.02%.
 
 ### R2 — Fix `load_dotenv()` reliability before Phase 2b training runs
 The MLflow tracking URI intermittently fails to load from `.env`. All Phase 2b encoder and fusion training scripts will need reliable MLflow logging. Either switch to `load_dotenv(override=True)` or add a centralized config loader that guarantees `.env` values are picked up.

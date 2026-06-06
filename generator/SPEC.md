@@ -79,11 +79,13 @@ where $A$ = alternative-wise transitions, $W$ = attribute-wise transitions in th
 
 | Archetype | Payne Index | prop_cells_inspected | mean dwell_ms |
 |---|---|---|---|
-| `price_lex` | -0.6 to -0.8 | 0.15–0.30 | 800–1200 |
+| `price_lex` | -1.0 to -0.80 | 0.10–0.30 (≈ 1/n_attrs) | 800–1200 |
 | `compensatory` | -0.2 to +0.2 | 0.60–0.85 | 1000–1800 |
 | `satisficer` | -0.3 to -0.5 | 0.30–0.55 | 900–1400 |
 | `brand_affect` | -0.7 to -0.9 | 0.10–0.20 | 600–1000 |
 | `low_involve` | -0.1 to +0.1 | 0.20–0.45 | 400–800 |
+
+**price_lex simulation**: `_simulate_lexicographic` inspects only the `first_attribute` (price) column — visits each alternative exactly once in random order. This produces PI = -1.0 (pure dimensional) and `prop_cells_inspected = 1/n_attrs`. Strategy lapses (`p_strategy_lapse` probability per trial) deviate to random scan.
 
 ### Fatigue and time pressure
 - Trials 15+: reduce `inspection_depth` by one level

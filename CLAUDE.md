@@ -174,4 +174,4 @@ Every bead that dispatches parallel sub-agents must include an explicit **Merge 
 
 ## Current Phase
 
-**Phase 2b — Fusion.** Phase 2a clean-up (epic kpn) complete. All 4 modality encoders implemented and retrained on 1001-participant dataset. Probe results: text 100%, psychographic 100%, transaction 62.59% (all pass); trace 35.57% (below 85% — supervised reimplementation in bead `6yl`). See `.claude/context/phase2a-fix-postmortem.md` for full assessment. Next: fusion layer (`fusion/`), trace encoder supervised objective, fusion architecture doc.
+**Phase 2b — Fusion.** All 4 modality encoders pass their thresholds on the 1001-participant dataset. Probe results: text 100%, psychographic 100%, transaction 62.59%, trace **95.02%** (all pass). Trace encoder uses supervised cross-entropy (NT-Xent replaced in bead `6yl`); generator price_lex bug fixed in bead `wva`. See `.claude/context/phase2a-fix-postmortem.md` for full diagnosis chain. Next: fusion layer (`fusion/`), fusion architecture doc.

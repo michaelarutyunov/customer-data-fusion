@@ -65,30 +65,23 @@ CLS token is prepended to the sequence (index 0), not appended.
 
 ## Training Objectives
 
-### Primary: Contrastive loss (NT-Xent / SimCLR variant)
+### Primary: Supervised cross-entropy classification
 
-Positive pairs: two trials from the same `persona_id`.
-Negative pairs: trials from different `persona_id` within the same batch.
-Temperature: τ = 0.07 (tunable via Optuna).
+Direct 7-class classification on `persona_id` archetype label. Loss:
 
-$$\mathcal{L}_{contrastive} = -\log \frac{\exp(\text{sim}(z_i, z_j)/\tau)}{\sum_{k \neq i} \exp(\text{sim}(z_i, z_k)/\tau)}$$
+$$\mathcal{L} = \text{CrossEntropy}(\text{logits}, \text{persona\_label})$$
 
-### Auxiliary: Strategy classification head (weight = 0.3)
+A linear classification head is added on top of the CLS embedding for training. The head is discarded after training; only the encoder backbone (up to and including the 128-dim projection) is saved to checkpoint.
 
-Linear head on top of frozen CLS embedding → 7-class softmax (one per persona archetype).
-Cross-entropy loss.
-
-$$\mathcal{L}_{total} = \mathcal{L}_{contrastive} + 0.3 \cdot \mathcal{L}_{classification}$$
-
-Classification head is auxiliary only — it is discarded after training. It provides supervision signal to prevent embedding collapse during contrastive training.
+**Why not contrastive (NT-Xent)?** NT-Xent was evaluated first (Phase 2a) and produced 35.57% strategy recovery regardless of participant count. The root cause is that NT-Xent optimises cluster *geometry* (same-class embeddings close, different-class far), while the downstream logistic regression probe requires *linear separability*. With only 7 classes and stochastic strategy simulation, NT-Xent cannot learn the required structure. Supervised cross-entropy directly optimises linear separability and achieves 95%+ strategy recovery on the same data. See `.claude/context/phase2a-fix-postmortem.md` for the full diagnosis.
 
 ## Training Configuration
 
 | Parameter | Value | Notes |
 |---|---|---|
-| Batch size | 256 | Must contain multiple trials per persona for contrastive pairs |
-| Learning rate | 1e-3 | Tune with Optuna |
-| Epochs | 50 | Early stopping on validation contrastive loss |
+| Batch size | 256 | |
+| Learning rate | 1e-3 | |
+| Epochs | 50 | Early stopping on validation classification loss (patience=10) |
 | Optimiser | AdamW, weight_decay=1e-4 | |
 | Train/val split | 80/20 by participant | Never split by trial — leakage risk |
 | Device | CPU | Sufficient at prototype scale |
@@ -117,6 +110,6 @@ Participant-level embedding: mean of all trial embeddings for that participant.
 ## Known Constraints
 
 - Train/val split must be by `participant_id`, never by `trial_id` — same participant's trials must not span train and val sets (data leakage)
-- Batch construction must ensure each batch contains at least 2 trials per persona for contrastive pairs to exist
 - Sequence padding must use attention mask — do not include PAD tokens in CLS attention
 - `adaptive` persona has highest intra-class variance by design — expect lower recovery accuracy for this archetype specifically
+- The classification head (linear, 128→7) is auxiliary to training — discard it after training, save only the encoder backbone up to `e_trace`
