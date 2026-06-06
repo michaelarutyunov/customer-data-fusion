@@ -167,10 +167,11 @@ Every bead that dispatches parallel sub-agents must include an explicit **Merge 
 | Data contracts | `.claude/context/data-contracts.md` |
 | Phase 1 post-mortem | `.claude/context/phase1-postmortem.md` |
 | Phase 2a post-mortem | `.claude/context/phase2a-postmortem.md` |
+| Phase 2a fix post-mortem | `.claude/context/phase2a-fix-postmortem.md` |
 | Fusion architecture | `.claude/context/fusion-architecture.md` *(create before Phase 2b)* |
 
 ---
 
 ## Current Phase
 
-**Phase 2b — Fusion.** Phase 2a complete: all 4 modality encoders implemented (`encoders/trace/`, `encoders/transaction/`, `encoders/text/`, `encoders/psychographic/`). Probe evaluation complete — text (99%) and psychographic (100%) pass thresholds; trace (38%) and transaction (bug) need work. See `.claude/context/phase2a-postmortem.md` for full assessment. Next: fusion layer (`fusion/`), encoder checkpoint management, transaction training bug fix, participant diversity increase.
+**Phase 2b — Fusion.** Phase 2a clean-up (epic kpn) complete. All 4 modality encoders implemented and retrained on 1001-participant dataset. Probe results: text 100%, psychographic 100%, transaction 62.59% (all pass); trace 35.57% (below 85% — supervised reimplementation in bead `6yl`). See `.claude/context/phase2a-fix-postmortem.md` for full assessment. Next: fusion layer (`fusion/`), trace encoder supervised objective, fusion architecture doc.
