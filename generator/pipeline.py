@@ -31,6 +31,8 @@ from pathlib import Path
 
 import structlog
 
+from schemas import PARTICIPANT_CONFIG_PATH
+from schemas.persona import InspectionDepth
 from generator.persona_sampler import list_archetype_ids, sample_persona
 from generator.psychographic_generator import generate_psychographic
 from generator.text_generator import generate_narrative
@@ -41,6 +43,17 @@ from generator.validate import validate_participant
 log = structlog.get_logger(__name__)
 
 _OUTPUT_DIR = Path("data/synthetic")
+
+
+def _inspection_depth_to_float(depth: InspectionDepth) -> float:
+    """Convert InspectionDepth enum to continuous float for evaluation."""
+    mapping = {
+        InspectionDepth.SHALLOW: 0.33,
+        InspectionDepth.MEDIUM: 0.66,
+        InspectionDepth.DEEP: 1.0,
+        InspectionDepth.VARIABLE: 0.5,  # average when variable
+    }
+    return mapping.get(depth, 0.5)
 
 
 def _to_json(obj: object) -> str:
@@ -108,6 +121,7 @@ def run_pipeline(
         "transactions": open(output_dir / "transactions.jsonl", "w"),
         "psychographics": open(output_dir / "psychographics.jsonl", "w"),
         "narratives": open(output_dir / "narratives.jsonl", "w"),
+        "participant_configs": open(PARTICIPANT_CONFIG_PATH, "w"),
     }
     counts: dict[str, int] = {k: 0 for k in handles}
     counts["narrative_failures"] = 0
@@ -196,6 +210,22 @@ def run_pipeline(
 
             handles["psychographics"].write(_to_json(psychographic) + "\n")
             counts["psychographics"] += 1
+
+            # Write participant config continuous latent variables
+            participant_config = {
+                "participant_id": participant_id,
+                "price_sensitivity": config.transactions.price_sensitivity,
+                "brand_loyalty": config.transactions.brand_loyalty,
+                "inspection_depth": _inspection_depth_to_float(
+                    config.strategy.inspection_depth
+                ),
+                "maximiser_score": config.psychographic.maximiser_score,
+                "involvement_score": config.psychographic.involvement_score,
+                "risk_tolerance": config.psychographic.risk_tolerance,
+                "p_strategy_lapse": config.strategy.p_strategy_lapse,
+            }
+            handles["participant_configs"].write(json.dumps(participant_config) + "\n")
+            counts["participant_configs"] += 1
 
             if narrative is not None:
                 handles["narratives"].write(_to_json(narrative) + "\n")

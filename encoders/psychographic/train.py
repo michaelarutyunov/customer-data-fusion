@@ -19,7 +19,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 import mlflow
 
-from schemas import EMBEDDING_DIM, PERSONA_LABELS, PERSONA_TO_IDX
+from schemas import CHECKPOINT_PATHS, EMBEDDING_DIM, PERSONA_LABELS, PERSONA_TO_IDX
 from schemas.psychographic import PsychographicVector
 
 from encoders.psychographic.features import (
@@ -200,6 +200,12 @@ def train(
             mlflow.log_metric("final_val_loss", final_val_loss)
     else:
         _train_loop()
+
+    # Save checkpoint
+    checkpoint_path = CHECKPOINT_PATHS["psychographic"]
+    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(model.state_dict(), checkpoint_path)
+    print(f"Saved checkpoint to {checkpoint_path}")
 
     return model
 

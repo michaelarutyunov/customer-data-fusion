@@ -50,10 +50,15 @@ CHECKPOINT_PATHS: dict[str, Path] = {
     "psychographic": Path("models/psychographic_encoder.pt"),
 }
 
+# Path for participant config continuous latent variables output.
+# Written by generator/pipeline.py; read by evaluation/config_probe.py and geometry.py.
+PARTICIPANT_CONFIG_PATH: Path = Path("data/synthetic/participant_configs.jsonl")
+
 __all__ = [
     # Encoder contract
     "EMBEDDING_DIM",
     "CHECKPOINT_PATHS",
+    "PARTICIPANT_CONFIG_PATH",
     # Archetype labels
     "PERSONA_LABELS",
     "PERSONA_TO_IDX",

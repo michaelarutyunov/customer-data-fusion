@@ -27,7 +27,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 import mlflow
 
-from schemas import EMBEDDING_DIM, PERSONA_LABELS, PERSONA_TO_IDX
+from schemas import CHECKPOINT_PATHS, EMBEDDING_DIM, PERSONA_LABELS, PERSONA_TO_IDX
 from schemas.text import PersonaNarrative
 
 # ---------------------------------------------------------------------------
@@ -392,6 +392,17 @@ def train(
             mlflow.log_metric("final_val_loss", final_val_loss)
     else:
         _train_loop()
+
+    # Save checkpoint (only trainable parameters, not frozen sentence-transformer)
+    checkpoint_path = CHECKPOINT_PATHS["text"]
+    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+    trainable_state_dict = {
+        name: param
+        for name, param in model.state_dict().items()
+        if not name.startswith("sentence_model.")
+    }
+    torch.save(trainable_state_dict, checkpoint_path)
+    print(f"Saved checkpoint to {checkpoint_path}")
 
     return model
 

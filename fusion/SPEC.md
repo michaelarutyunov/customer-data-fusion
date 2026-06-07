@@ -114,14 +114,35 @@ Cache is invalidated if any encoder checkpoint is newer than the cache file (che
 
 All metrics computed on the val split (201 participants) unless stated otherwise.
 
+### Archetype recovery (pass/fail gate)
+
 | Metric | Definition | Threshold |
 |---|---|---|
-| Strategy recovery accuracy | Top-1 accuracy of persona classification | >85% |
-| Per-modality ablation delta | Accuracy drop when one modality is zeroed out | Diagnostic — logged, no pass/fail gate |
-| Modality importance weights | Mean absolute output change per modality zeroing test | Logged, no threshold |
-| CDT embedding geometry | UMAP coloured by persona — visual cluster separation | Qualitative |
+| Strategy recovery accuracy | Top-1 accuracy of persona classification | >85% — only hard gate |
+| Per-modality ablation delta | Accuracy drop when one modality is zeroed out | Diagnostic — no pass/fail |
+| Modality importance weights | Mean absolute output change per modality zeroing test | Diagnostic — no threshold |
 
-**Ablation test procedure**: for each modality, zero out its 128-dim slice of the 512-dim input and re-evaluate accuracy on the val split. Report the delta from the full-modality baseline. A delta < 5% is a finding worth investigating, not a failure — text and psychographic encoders both achieve 100% individual probe accuracy and may encode correlated information, making low deltas an expected and reportable result (see Phase 2a fix post-mortem R7). The only hard gate is overall strategy recovery >85%.
+**Ablation procedure**: for each modality, zero out its 128-dim slice of the 512-dim input and re-evaluate accuracy on the val split. Report the delta from the full-modality baseline. A delta < 5% is a finding worth investigating, not a failure — text and psychographic encoders both achieve 100% individual probe accuracy and may encode correlated information, making low deltas an expected and reportable result (see Phase 2a fix post-mortem R7). The only hard gate is overall strategy recovery >85%.
+
+Note: text and psychographic encoders are near-sufficient statistics for the latent `PersonaConfig` — 100% archetype accuracy from a single modality is expected and does not imply fusion has nothing to add. The three evaluations below probe what fusion adds beyond archetype recovery.
+
+### CDT embedding quality (diagnostic — no pass/fail gates)
+
+These evaluate whether the CDT embedding captures participant-level behavioural structure beyond the 7-class archetype label. All operate on the full dataset (1001 participants).
+
+| Metric | Definition | Implementation |
+|---|---|---|
+| CDT geometry | UMAP coloured by archetype (between-persona separation) + coloured by continuous PersonaConfig param within cluster (within-persona variation) | `evaluation/geometry.py` |
+| Cross-modal retrieval | recall@1 and recall@10: CDT embedding → each single-modality space (4 tests); single-modality → single-modality (6 pairs). Within-archetype recall@1 vs chance baseline (1/143) | `evaluation/retrieval.py` |
+| PersonaConfig regression | Ridge R² for each of 7 latent params × 5 embedding sets (fused + 4 individual). Tests whether fusion recovers continuous latent variables better than any single modality | `evaluation/config_probe.py` |
+
+**Interpreting the geometry evaluation**: the within-persona UMAP view (coloured by a continuous param such as `price_sensitivity`) tests whether the CDT embedding preserves individual deviation from the archetype centre. If participants cluster by archetype but show no gradient within clusters, the embedding has collapsed within-persona variation — it is a persona classifier, not a participant-level twin. A visible gradient is evidence that the embedding encodes individual behavioural structure beyond the label.
+
+**Interpreting retrieval**: within-archetype recall@1 measures whether the CDT embedding identifies the same participant across modalities, not just the same archetype. Chance is ≈1/143. Recall significantly above chance is the primary evidence that fusion learns a shared participant-level representation.
+
+**Interpreting the regression probe**: a fused R² higher than all four individual modalities for a given parameter is the clearest evidence fusion is combining complementary information. For parameters like `inspection_depth` (strongly encoded in traces) or `price_sensitivity` (strongly encoded in transactions), single-modality probes will score high — fusion should match or exceed them. For parameters that no single modality encodes well, fusion may add most.
+
+These three evaluations together determine whether the prototype supports the strong CDT claim or only the weaker archetype-recovery claim — see `.claude/context/project-vision.md`.
 
 ## File Structure
 
@@ -132,6 +153,18 @@ fusion/
   meta_learner.py     # LateFusionMetaLearner (Phase 1 + 2)
   early_fusion.py     # placeholder for Phase 3
   train.py            # fusion training + embedding cache generation
+
+evaluation/
+  strategy_recovery.py  # archetype classification accuracy + comparison table
+  ablation.py           # leave-one-out modality ablation (4 tests)
+  geometry.py           # UMAP projection + within-persona colouring
+  retrieval.py          # cross-modal nearest-neighbour retrieval
+  config_probe.py       # Ridge regression probes for PersonaConfig params
+
+data/synthetic/
+  participant_configs.jsonl  # PersonaConfig float params per participant
+                             # written by generator/pipeline.py (bead c33)
+                             # required by geometry.py and config_probe.py
 ```
 
 ### `meta_learner.py` interface
@@ -181,7 +214,15 @@ Checkpoint saved to `models/fusion_meta_learner.pt` (state dict of meta-learner 
 - `fusion/` imports encoder model classes (e.g. `from encoders.trace.model import TraceEncoder`) to reconstruct architectures for checkpoint loading, but never couples to encoder training logic. The prohibition in CLAUDE.md is generator↔encoders, not fusion→encoders.
 - `fusion/` imports from `schemas/` for CHECKPOINT_PATHS, PERSONA_TO_IDX, and EMBEDDING_DIM. No circular imports.
 
-## Open Questions (resolve before implementing 67a.3)
+## Resolved Design Decisions (resolved 2026-06-07, subject to human review gate 67a.2)
 
-1. **Normalisation before concat**: Should each 128-dim embedding be L2-normalised before concatenation? Unnormalised embeddings from different encoders may have different magnitude scales, biasing the MLP toward higher-variance modalities.
-2. **Modality masking at inference**: Should the trained model support partial-modality inference (e.g., participant has no transaction data)? If yes, modality dropout at training time already handles this — but the output distribution will shift and should be documented.
+1. **Normalisation before concat**: **Yes — L2-normalise each 128-dim embedding before concatenation.**
+   Each encoder was trained with a different objective and may produce embeddings with different magnitude scales. Without normalisation, the MLP will bias toward the highest-variance modality. Normalise each `[B, 128]` slice to unit norm before `torch.cat`:
+   ```python
+   embs = [F.normalize(e, dim=-1) for e in [trace_emb, tx_emb, text_emb, psycho_emb]]
+   fusion_input = torch.cat(embs, dim=-1)  # [B, 512], each slice unit-normed
+   ```
+   Apply normalisation consistently at both training time (on cached embeddings) and inference time.
+
+2. **Partial-modality inference**: **Yes — support missing modalities at inference by zeroing the absent slice.**
+   Modality dropout at training time (p=0.2) already trains the model to produce useful outputs when any modality is absent. At inference, if a modality is unavailable for a participant, zero its 128-dim slice. Document this in `train.py` docstring. The output distribution will shift slightly from full-modality inference — note this as a known limitation, not a bug.
