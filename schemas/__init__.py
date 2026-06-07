@@ -9,6 +9,7 @@ from pathlib import Path
 
 from schemas.persona import (
     PersonaConfig,
+    LatentDeviation,
     StrategyParams,
     TransactionParams,
     PsychographicParams,
@@ -65,6 +66,7 @@ __all__ = [
     "PERSONA_TO_IDX",
     # Persona (generative root)
     "PersonaConfig",
+    "LatentDeviation",
     "StrategyParams",
     "TransactionParams",
     "PsychographicParams",

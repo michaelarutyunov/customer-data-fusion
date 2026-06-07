@@ -119,6 +119,56 @@ class NarrativeParams:
 
 
 @dataclass(frozen=True)
+class LatentDeviation:
+    """
+    Per-participant latent deviation vector ``z`` — the cross-modal individual
+    consistency device.
+
+    Sampled ONCE per participant at ``sample_persona`` time (``z ~ N(0, I)``),
+    stored on the shared ``PersonaConfig``, and read by EVERY modality generator.
+    Each generator projects ``z`` into its own modality through a modality-specific,
+    lossy, noisy map, so that within-archetype individual variation is *consistent*
+    across modalities (P037's brand lean shows up in their traces, transactions,
+    psychographic, and narrative) without any modality being an invertible readout
+    of ``z`` (see §4 of the generator redesign analysis).
+
+    Axes are standardised deviations (mean 0, unit scale). A positive value means
+    "more than the archetype average" on that axis; negative means less. Magnitudes
+    around ±2 are tail individuals. These are NOT bounded to [0, 1] — generators are
+    responsible for projecting and clipping into each parameter's valid range.
+
+    Axes
+    ----
+    price_lean   : sensitivity to price (drives price_sensitivity, price_consciousness,
+                   price-column trace inspection, price language in narrative)
+    brand_lean   : brand loyalty (drives brand_loyalty, brand_sensitivity,
+                   brand-column trace inspection, trusted-brand narrative language)
+    thoroughness : depth of search (drives inspection depth jitter, prop_cells_inspected,
+                   involvement_score, maximiser_score, "deliberate" narrative language)
+    impulsivity  : tendency to short-circuit search (drives p_strategy_lapse,
+                   purchase_type=IMPULSE share, shorter dwell, impulsive narrative language)
+    openness     : willingness to try new options (drives openness_to_new,
+                   risk_tolerance, brand-tier spread, "open to new" narrative language)
+    """
+
+    price_lean: float = 0.0
+    brand_lean: float = 0.0
+    thoroughness: float = 0.0
+    impulsivity: float = 0.0
+    openness: float = 0.0
+
+    def as_tuple(self) -> tuple[float, float, float, float, float]:
+        """Latent as an ordered 5-tuple for vectorised projection in generators."""
+        return (
+            self.price_lean,
+            self.brand_lean,
+            self.thoroughness,
+            self.impulsivity,
+            self.openness,
+        )
+
+
+@dataclass(frozen=True)
 class PersonaConfig:
     """
     The generative root. All synthetic modalities for a participant are
@@ -139,3 +189,9 @@ class PersonaConfig:
     # Noise seed for reproducible per-participant sampling
     # Set at participant instantiation, not at archetype definition
     random_seed: Optional[int] = None
+
+    # Per-participant latent deviation ``z`` — shared across all modality
+    # generators to enforce cross-modal individual consistency. Defaults to a
+    # zero vector (= archetype mean, no individual deviation) so that existing
+    # call sites and serialised configs that predate this field remain valid.
+    latent: Optional[LatentDeviation] = None
