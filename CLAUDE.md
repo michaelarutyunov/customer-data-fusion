@@ -172,10 +172,13 @@ Every bead that dispatches parallel sub-agents must include an explicit **Merge 
 | Phase 1 post-mortem | `.claude/context/phase1-postmortem.md` |
 | Phase 2a post-mortem | `.claude/context/phase2a-postmortem.md` |
 | Phase 2a fix post-mortem | `.claude/context/phase2a-fix-postmortem.md` |
-| Fusion architecture | `.claude/context/fusion-architecture.md` *(create before Phase 2b)* |
+| Fusion architecture | `.claude/context/fusion-architecture.md` |
+| Phase 2b post-mortem | `.claude/context/phase2b-postmortem.md` |
+| PRD validation | `.claude/context/prd-validation.md` |
+| Prototype summary | `.claude/context/prototype-summary.md` |
 
 ---
 
 ## Current Phase
 
-**Phase 2b — Fusion.** All 4 modality encoders pass their thresholds on the 1001-participant dataset. Probe results: text 100%, psychographic 100%, transaction 62.59%, trace **95.02%** (all pass). Trace encoder uses supervised cross-entropy (NT-Xent replaced in bead `6yl`); generator price_lex bug fixed in bead `wva`. See `.claude/context/phase2a-fix-postmortem.md` for full diagnosis chain. Next: fusion layer (`fusion/`), fusion architecture doc.
+**Prototype Complete.** Phase 2b (Fusion and Evaluation) is closed. All four modality encoders trained; late-fusion meta-learner achieves 100% strategy recovery (Tier 1 gate >85% passes). Tier 2 evaluation: cross-modal retrieval near-zero (CDT is archetype-level, not individual-level); PersonaConfig regression R² 0.73–0.98 (fused best on all 7 params). Counterfactual simulation (Option A) implemented; Option B (generator re-run) deferred to bead `sei`. See `.claude/context/phase2b-postmortem.md` for full findings and retrospective. See `.claude/context/prd-validation.md` for formal PRD criterion assessment (3 PASS, 1 PARTIAL).
