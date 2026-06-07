@@ -48,6 +48,7 @@ CHECKPOINT_PATHS: dict[str, Path] = {
     "transaction": Path("models/transaction_encoder.pt"),
     "text": Path("models/text_encoder.pt"),
     "psychographic": Path("models/psychographic_encoder.pt"),
+    "fusion": Path("models/fusion_meta_learner.pt"),
 }
 
 # Path for participant config continuous latent variables output.
