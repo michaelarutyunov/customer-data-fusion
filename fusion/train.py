@@ -64,11 +64,11 @@ def load_encoders(device: str = "cpu") -> dict[str, nn.Module]:
     encoders["trace"] = trace_encoder
 
     # Transaction encoder
-    tx_encoder = TransactionEncoder(n_classes=7).to(device)
+    tx_encoder = TransactionEncoder(projection_dim=16, gru_hidden=32).to(device)
     tx_state = torch.load(
         CHECKPOINT_PATHS["transaction"], map_location=device, weights_only=True
     )
-    tx_encoder.load_state_dict(tx_state)
+    tx_encoder.load_state_dict(tx_state, strict=False)
     for param in tx_encoder.parameters():
         param.requires_grad = False
     encoders["transaction"] = tx_encoder
@@ -158,7 +158,7 @@ def split_by_participant(
 def load_modality_data(
     modality: str,
     participant_ids: list[str],
-) -> dict[str, torch.Tensor]:
+) -> dict[str, dict]:
     """Load modality data and index by participant_id.
 
     Parameters
@@ -193,62 +193,142 @@ def load_modality_data(
 def generate_embeddings(
     encoders: dict[str, nn.Module],
     psychographics: list[dict],
-    modality_data: dict[str, dict[str, torch.Tensor]],
+    modality_data: dict[str, dict[str, dict]],
     device: str = "cpu",
-) -> dict[str, torch.Tensor]:
-    """Generate embeddings for all participants using frozen encoders.
+) -> dict:
+    """Generate embeddings for all participants using frozen encoders."""
+    from collections import defaultdict
 
-    Parameters
-    ----------
-    encoders : dict[str, nn.Module]
-        Frozen encoder models.
-    psychographics : list[dict]
-        Psychographic records with participant_id and persona_id.
-    modality_data : dict[str, dict[str, torch.Tensor]]
-        Modality data indexed by modality name and participant_id.
-    device : str
-        Target device for computation.
+    from encoders.psychographic.features import to_feature_vector
+    from encoders.trace.tokeniser import build_vocab, tokenise_trial
+    from encoders.transaction.features import sort_transactions_most_recent_first
+    from encoders.transaction.model import TransactionEncoder as TxEncoder
+    from encoders.text.embed import TextEncoder as TxtEncoder
+    from schemas.psychographic import PsychographicVector
+    from schemas.trace import AcquisitionEvent, TrialRecord
+    from schemas.transaction import TransactionRecord
 
-    Returns
-    -------
-    dict[str, torch.Tensor]
-        Dictionary with keys "trace", "transaction", "text", "psychographic",
-        "labels", "participant_ids". Each embedding tensor has shape [N, 128].
-    """
     n_participants = len(psychographics)
-    embeddings = {
-        "trace": torch.zeros(n_participants, EMBEDDING_DIM, device=device),
-        "transaction": torch.zeros(n_participants, EMBEDDING_DIM, device=device),
-        "text": torch.zeros(n_participants, EMBEDDING_DIM, device=device),
-        "psychographic": torch.zeros(n_participants, EMBEDDING_DIM, device=device),
-        "labels": torch.zeros(n_participants, dtype=torch.long, device=device),
+    embeddings: dict = {
+        "trace": torch.zeros(n_participants, EMBEDDING_DIM, device=device),  # type: ignore[reportPrivateImportUsage]
+        "transaction": torch.zeros(n_participants, EMBEDDING_DIM, device=device),  # type: ignore[reportPrivateImportUsage]
+        "text": torch.zeros(n_participants, EMBEDDING_DIM, device=device),  # type: ignore[reportPrivateImportUsage]
+        "psychographic": torch.zeros(n_participants, EMBEDDING_DIM, device=device),  # type: ignore[reportPrivateImportUsage]
+        "labels": torch.zeros(n_participants, dtype=torch.long, device=device),  # type: ignore[reportPrivateImportUsage]
         "participant_ids": [],
     }
 
+    # Build pid → index map
+    pid_to_idx = {p["participant_id"]: i for i, p in enumerate(psychographics)}
+
+    # ── Load trace events grouped by participant ──────────────────────────────
+    events_by_pid: dict[str, list] = defaultdict(list)
+    trials_by_pid: dict[str, list] = defaultdict(list)
+
+    traces_path = Path("data/synthetic/traces.jsonl")
+    for line in traces_path.read_text().strip().splitlines():
+        r = json.loads(line)
+        pid = r.get("participant_id", "")
+        if pid in pid_to_idx:
+            events_by_pid[pid].append(AcquisitionEvent(**r))
+
+    trials_path = Path("data/synthetic/trials.jsonl")
+    for line in trials_path.read_text().strip().splitlines():
+        r = json.loads(line)
+        pid = r.get("participant_id", "")
+        if pid in pid_to_idx:
+            trials_by_pid[pid].append(TrialRecord(**r))
+
+    # Build vocab from all events
+    all_events = [ev for evs in events_by_pid.values() for ev in evs]
+    vocab = build_vocab(all_events)
+
+    # ── Load transaction records grouped by participant ────────────────────────
+    tx_by_pid: dict[str, list] = defaultdict(list)
+    tx_path = Path("data/synthetic/transactions.jsonl")
+    for line in tx_path.read_text().strip().splitlines():
+        r = json.loads(line)
+        pid = r.get("participant_id", "")
+        if pid in pid_to_idx:
+            tx_by_pid[pid].append(r)
+
+    # ── Encode per participant ─────────────────────────────────────────────────
     for i, psycho in enumerate(psychographics):
-        participant_id = psycho["participant_id"]
-        embeddings["participant_ids"].append(participant_id)
+        pid = psycho["participant_id"]
+        embeddings["participant_ids"].append(pid)
         embeddings["labels"][i] = PERSONA_TO_IDX[psycho["persona_id"]]
 
-        # Generate trace embedding
-        trace_data = modality_data["traces"].get(participant_id, [])
-        trace_emb = encoders["trace"].embed_trace(trace_data)
-        embeddings["trace"][i] = trace_emb
+        with torch.no_grad():
+            # Trace: mean-pool embeddings across all trials for this participant
+            trial_embs = []
+            for trial in trials_by_pid.get(pid, []):
+                trial_events = events_by_pid.get(pid, [])
+                # Filter events for this specific trial
+                tid_events = [e for e in trial_events if e.trial_id == trial.trial_id]
+                if not tid_events:
+                    continue
+                tokens, mask = tokenise_trial(tid_events, trial, vocab)
+                tokens_b = tokens.unsqueeze(0).to(device)
+                mask_b = mask.unsqueeze(0).to(device) if mask is not None else None
+                emb = encoders["trace"](tokens_b, mask_b)
+                trial_embs.append(emb.squeeze(0))
+            if trial_embs:
+                embeddings["trace"][i] = torch.stack(trial_embs).mean(0)
 
-        # Generate transaction embedding
-        tx_data = modality_data["transactions"].get(participant_id, [])
-        tx_emb = encoders["transaction"].embed_transactions(tx_data)
-        embeddings["transaction"][i] = tx_emb
+            # Transaction: encode sequence, get participant embedding
+            raw_txs = tx_by_pid.get(pid, [])
+            if raw_txs:
+                tx_records = [
+                    TransactionRecord(
+                        participant_id=r.get("participant_id", ""),
+                        persona_id=r.get("persona_id", ""),
+                        transaction_id=r.get("transaction_id", ""),
+                        days_before_session=r.get("days_before_session", 0),
+                        category=r.get("category", ""),
+                        product_id=r.get("product_id", ""),
+                        brand_tier=r.get("brand_tier", "value"),
+                        price_paid_normalised=r.get("price_paid_normalised", 0.0),
+                        quantity=r.get("quantity", 1),
+                        channel=r.get("channel", "online"),
+                        purchase_type=r.get("purchase_type", "planned"),
+                        on_promotion=r.get("on_promotion", False),
+                        loyalty_card=r.get("loyalty_card"),
+                    )
+                    for r in raw_txs
+                ]
+                sorted_tx = sort_transactions_most_recent_first(tx_records)
+                tx_enc = encoders["transaction"]
+                assert isinstance(tx_enc, TxEncoder)
+                token_seq = tx_enc.vocab.encode_sequence(sorted_tx)
+                token_seq_b = token_seq.unsqueeze(0).to(device)
+                lengths = torch.tensor([len(sorted_tx)], device=device)  # type: ignore[reportPrivateImportUsage]
+                embeddings["transaction"][i] = tx_enc(token_seq_b, lengths).squeeze(0)
 
-        # Generate text embedding
-        narrative_data = modality_data["narratives"].get(participant_id)
-        if narrative_data:
-            text_emb = encoders["text"].encode_texts([narrative_data["text"]])
-            embeddings["text"][i] = text_emb.squeeze(0)
+            # Text: sentence-transformer encode then project
+            narrative = modality_data["narratives"].get(pid)
+            if narrative:
+                text = narrative.get("text", "")
+                if text:
+                    txt_enc = encoders["text"]
+                    assert isinstance(txt_enc, TxtEncoder)
+                    sent_emb = txt_enc.encode_texts([text]).to(device)
+                    embeddings["text"][i] = txt_enc(sent_emb).squeeze(0)
 
-        # Generate psychographic embedding
-        psycho_emb = encoders["psychographic"].embed_psychographic(psycho)
-        embeddings["psychographic"][i] = psycho_emb
+            # Psychographic: feature vector → MLP
+            psycho_vec = PsychographicVector(
+                **{
+                    k: v
+                    for k, v in psycho.items()
+                    if k in PsychographicVector.__dataclass_fields__
+                }
+            )
+            raw_vec = to_feature_vector(psycho_vec).to(device)
+            embeddings["psychographic"][i] = encoders["psychographic"](
+                raw_vec.unsqueeze(0)
+            ).squeeze(0)
+
+        if (i + 1) % 100 == 0:
+            print(f"  Embedded {i + 1}/{n_participants} participants")
 
     return embeddings
 
@@ -262,7 +342,7 @@ def build_cache(
     encoders: dict[str, nn.Module],
     cache_path: Path,
     device: str = "cpu",
-) -> dict[str, torch.Tensor | list[str]]:
+) -> dict:
     """Build or load embedding cache.
 
     Parameters
@@ -276,7 +356,7 @@ def build_cache(
 
     Returns
     -------
-    dict[str, torch.Tensor | list[str]]
+    dict
         Cached embeddings with keys "trace", "transaction", "text",
         "psychographic", "labels", "participant_ids".
     """
@@ -304,10 +384,8 @@ def build_cache(
     psychographics = load_psychographics()
     participant_ids = [p["participant_id"] for p in psychographics]
 
-    # Load modality data
+    # Narratives loaded here; traces and transactions loaded inside generate_embeddings
     modality_data = {
-        "traces": load_modality_data("traces", participant_ids),
-        "transactions": load_modality_data("transactions", participant_ids),
         "narratives": load_modality_data("narratives", participant_ids),
     }
 
@@ -383,13 +461,13 @@ def train(
     embeddings = build_cache(encoders, cache_path, device)
 
     # Split participants
-    participant_ids = embeddings["participant_ids"]
+    participant_ids: list[str] = embeddings["participant_ids"]  # type: ignore[assignment]
     train_ids, val_ids = split_by_participant(participant_ids)
 
     # Create train/val indices
     participant_to_idx = {pid: i for i, pid in enumerate(participant_ids)}
-    train_indices = torch.tensor([participant_to_idx[pid] for pid in train_ids])
-    val_indices = torch.tensor([participant_to_idx[pid] for pid in val_ids])
+    train_indices = torch.tensor([participant_to_idx[pid] for pid in train_ids])  # type: ignore[reportPrivateImportUsage]
+    val_indices = torch.tensor([participant_to_idx[pid] for pid in val_ids])  # type: ignore[reportPrivateImportUsage]
 
     # Extract embeddings and labels
     train_embs = {
@@ -423,7 +501,7 @@ def train(
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
     criterion = nn.CrossEntropyLoss()
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="max", factor=0.5, patience=5, verbose=True
+        optimizer, mode="max", factor=0.5, patience=5
     )
 
     # Training loop
@@ -453,7 +531,9 @@ def train(
 
             # L2-normalise each modality
             norm_embs = [F.normalize(batch_embs[:, i], p=2, dim=-1) for i in range(4)]
-            fusion_input = torch.cat(norm_embs, dim=-1)  # [B, 512]
+            fusion_input = torch.cat(
+                norm_embs, dim=-1
+            )  # [B, 512]  # type: ignore[reportPrivateImportUsage]
 
             # Forward pass
             logits = model(fusion_input)
@@ -484,7 +564,7 @@ def train(
                 norm_embs = [
                     F.normalize(batch_embs[:, i], p=2, dim=-1) for i in range(4)
                 ]
-                fusion_input = torch.cat(norm_embs, dim=-1)
+                fusion_input = torch.cat(norm_embs, dim=-1)  # type: ignore[reportPrivateImportUsage]
 
                 logits = model(fusion_input)
                 loss = criterion(logits, batch_labels)

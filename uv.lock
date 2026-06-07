@@ -649,7 +649,9 @@ dev = [
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "ruff" },
+    { name = "scikit-learn" },
     { name = "skrub" },
+    { name = "umap-learn" },
 ]
 
 [package.metadata]
@@ -680,7 +682,9 @@ dev = [
     { name = "pytest", specifier = ">=9.0.3" },
     { name = "pytest-cov", specifier = ">=7.1.0" },
     { name = "ruff", specifier = ">=0.15.16" },
+    { name = "scikit-learn", specifier = ">=1.9.0" },
     { name = "skrub", specifier = "==0.9.0" },
+    { name = "umap-learn", specifier = ">=0.5.12" },
 ]
 
 [[package]]
