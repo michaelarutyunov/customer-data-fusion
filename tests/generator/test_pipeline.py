@@ -106,6 +106,7 @@ class TestRunPipeline:
             "psychographics",
             "narratives",
             "narrative_failures",
+            "participant_configs",
         }
 
 

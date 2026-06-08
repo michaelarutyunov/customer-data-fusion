@@ -174,14 +174,13 @@ class TestPriceConsciousnessCheck:
         checks = [f[0] for f in report.failures]
         assert "price_consciousness" not in checks
 
-    def test_price_lex_fails_when_pc_too_low(self):
+    def test_price_lex_no_fail_when_pc_in_range(self):
         config = _make_config("price_lex", PriceConsciousness.HIGH)
-        # Deliberately misconfigure: HIGH strategy but low pc value
+        # Directional checks removed — individual variation is expected. Only data bugs fail.
         psycho = _make_psychographic("price_lex", price_consciousness=0.20)
         report = validate_participant(config, [], [], psycho, _make_narrative())
-        assert not report.passed
         checks = [f[0] for f in report.failures]
-        assert "price_consciousness" in checks
+        assert "price_consciousness" not in checks
 
     def test_quality_lex_passes_with_low_pc(self):
         config = _make_config(
@@ -192,14 +191,15 @@ class TestPriceConsciousnessCheck:
         checks = [f[0] for f in report.failures]
         assert "price_consciousness" not in checks
 
-    def test_quality_lex_fails_when_pc_too_high(self):
+    def test_quality_lex_no_fail_when_pc_in_range(self):
         config = _make_config(
             "quality_lex", PriceConsciousness.LOW, price_sensitivity=0.25
         )
+        # Directional checks removed — individual variation is expected. Only data bugs fail.
         psycho = _make_psychographic("quality_lex", price_consciousness=0.80)
         report = validate_participant(config, [], [], psycho, _make_narrative())
         checks = [f[0] for f in report.failures]
-        assert "price_consciousness" in checks
+        assert "price_consciousness" not in checks
 
 
 # ---------------------------------------------------------------------------
@@ -227,22 +227,24 @@ class TestBrandSensitivityCheck:
         checks = [f[0] for f in report.failures]
         assert "brand_sensitivity" not in checks
 
-    def test_brand_affect_fails_with_low_bs(self):
+    def test_brand_affect_no_fail_with_low_bs(self):
         config = _make_config("brand_affect")
+        # brand_sensitivity directional check removed — individual variation is expected.
         psycho = _make_psychographic("brand_affect", brand_sensitivity=0.30)
         report = validate_participant(config, [], [], psycho, _make_narrative())
         checks = [f[0] for f in report.failures]
-        assert "brand_sensitivity" in checks
+        assert "brand_sensitivity" not in checks
 
     def test_brand_tier_concentration_fails_when_spread(self):
         config = _make_config("brand_affect")
         psycho = _make_psychographic("brand_affect", brand_sensitivity=0.85)
-        # Spread across 4 tiers equally
+        # Spread across 5 tiers equally → top-2 = 40% < 50% threshold
         transactions = [
             _make_transaction(brand_tier="premium"),
             _make_transaction(brand_tier="mid"),
             _make_transaction(brand_tier="value"),
             _make_transaction(brand_tier="own_label"),
+            _make_transaction(brand_tier="luxury"),
         ]
         report = validate_participant(
             config, [], transactions, psycho, _make_narrative()
@@ -310,8 +312,9 @@ class TestTransactionPriceConsistency:
         checks = [f[0] for f in report.failures]
         assert "transaction_price_consistency" not in checks
 
-    def test_high_sensitivity_high_price_fails(self):
-        config = _make_config("price_lex", price_sensitivity=0.85)
+    def test_high_sensitivity_high_price_warns_not_fails(self):
+        # Threshold widened to ps>0.85 (strict) and mean_price>0.70; this is warning-only now.
+        config = _make_config("price_lex", price_sensitivity=0.90)
         transactions = [_make_transaction(price_paid=0.80)] * 10
         report = validate_participant(
             config,
@@ -320,8 +323,9 @@ class TestTransactionPriceConsistency:
             _make_psychographic("price_lex"),
             _make_narrative(),
         )
+        # Not a hard failure — only a WARNING log; report should still pass
         checks = [f[0] for f in report.failures]
-        assert "transaction_price_consistency" in checks
+        assert "transaction_price_consistency" not in checks
 
     def test_empty_transactions_skips_check(self):
         config = _make_config("price_lex", price_sensitivity=0.85)

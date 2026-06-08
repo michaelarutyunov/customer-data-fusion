@@ -108,7 +108,14 @@ class TestContinuousFieldsInRange:
 
 class TestCategoricalFieldValues:
     def test_decision_style_valid(self) -> None:
-        valid = {"analytical", "intuitive", "dependent", "avoidant", "spontaneous"}
+        valid = {
+            "analytical",
+            "intuitive",
+            "dependent",
+            "avoidant",
+            "spontaneous",
+            "deliberate",
+        }
         for strategy in Strategy:
             config = _make_config(strategy=strategy)
             result = generate_psychographic(config)
@@ -134,21 +141,57 @@ class TestCategoricalFieldValues:
 
 
 class TestDecisionStyleMapping:
-    @pytest.mark.parametrize(
-        "strategy,expected",
-        [
-            (Strategy.LEXICOGRAPHIC, "analytical"),
-            (Strategy.COMPENSATORY, "analytical"),
-            (Strategy.SATISFICING, "dependent"),
-            (Strategy.AFFECT_HEURISTIC, "intuitive"),
-            (Strategy.RANDOM, "spontaneous"),
-            (Strategy.ADAPTIVE, "avoidant"),
-        ],
-    )
-    def test_strategy_maps_correctly(self, strategy: Strategy, expected: str) -> None:
+    """Decision style is now z-conditioned softmax, not a deterministic strategy lookup."""
+
+    _VALID_STYLES = {
+        "analytical",
+        "intuitive",
+        "dependent",
+        "avoidant",
+        "spontaneous",
+        "deliberate",
+    }
+
+    @pytest.mark.parametrize("strategy", list(Strategy))
+    def test_decision_style_is_valid_for_any_strategy(self, strategy: Strategy) -> None:
+        """Any strategy produces a valid decision style (softmax sampling)."""
         config = _make_config(strategy=strategy)
         result = generate_psychographic(config)
-        assert result.decision_style_dominant == expected
+        assert result.decision_style_dominant in self._VALID_STYLES
+
+    def test_high_impulsivity_favours_spontaneous(self) -> None:
+        """z.impulsivity=2.0 should heavily bias toward spontaneous."""
+        from dataclasses import replace
+        from schemas.persona import LatentDeviation
+
+        base = _make_config(random_seed=0)
+        config = replace(
+            base, latent=LatentDeviation(impulsivity=2.0, thoroughness=-2.0)
+        )
+        styles = [
+            generate_psychographic(
+                replace(config, random_seed=s)
+            ).decision_style_dominant
+            for s in range(20)
+        ]
+        assert styles.count("spontaneous") > 10
+
+    def test_high_thoroughness_favours_analytical(self) -> None:
+        """z.thoroughness=2.0 should heavily bias toward analytical/deliberate."""
+        from dataclasses import replace
+        from schemas.persona import LatentDeviation
+
+        base = _make_config(random_seed=0)
+        config = replace(
+            base, latent=LatentDeviation(thoroughness=2.0, impulsivity=-2.0)
+        )
+        styles = [
+            generate_psychographic(
+                replace(config, random_seed=s)
+            ).decision_style_dominant
+            for s in range(20)
+        ]
+        assert styles.count("analytical") + styles.count("deliberate") > 10
 
 
 class TestPurchaseFrequencyBandMapping:
@@ -228,10 +271,11 @@ class TestReproducibility:
         c2 = _make_config(random_seed=999)
         r1 = generate_psychographic(c1)
         r2 = generate_psychographic(c2)
-        # At least one continuous field should differ
+        # Age band, employment status, or price_consciousness should differ across seeds
         assert (
-            r1.involvement_score != r2.involvement_score
-            or r1.maximiser_score != r2.maximiser_score
+            r1.age_band != r2.age_band
+            or r1.employment_status != r2.employment_status
+            or r1.price_consciousness != r2.price_consciousness
         )
 
 

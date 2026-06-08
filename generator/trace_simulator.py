@@ -20,6 +20,7 @@ import structlog
 
 from schemas.persona import (
     InspectionDepth,
+    LatentDeviation,
     PersonaConfig,
     Strategy,
     StrategyParams,
@@ -28,17 +29,9 @@ from schemas.trace import AcquisitionEvent, TrialRecord
 
 log = structlog.get_logger(__name__)
 
-# ── archetype-level dwell parameters (log-normal mu) ─────────────────────────
+# ── dwell parameters (log-normal) ────────────────────────────────────────────
 # E[lognormal(mu, sigma)] = exp(mu + sigma^2/2)
 # With sigma=0.5: E = exp(mu + 0.125)
-_DWELL_MU: dict[str, float] = {
-    "price_lex": 6.75,
-    "compensatory": 7.10,
-    "brand_affect": 6.55,
-    "low_involve": 6.15,
-    "satisficer": 6.95,
-}
-_DWELL_MU_DEFAULT = 6.90
 _DWELL_SIGMA = 0.5
 
 # ── inspection-depth fraction targets ────────────────────────────────────────
@@ -47,16 +40,6 @@ _DEPTH_FRACTION: dict[InspectionDepth, float] = {
     InspectionDepth.MEDIUM: 0.42,
     InspectionDepth.DEEP: 0.72,
     InspectionDepth.VARIABLE: 0.42,
-}
-
-# ── per-archetype baseline depth fraction overrides ──────────────────────────
-# These override the depth-enum fractions when determining the BASE fraction
-# for an archetype. Fatigue and time_pressure multipliers still apply on top.
-# Keys match config.persona_id values.
-_ARCHETYPE_DEPTH_FRACTION: dict[str, float] = {
-    "compensatory": 0.72,  # stays deep even under fatigue
-    "satisficer": 0.42,  # stays at medium; fatigue reduces to 0.30 not 0.225
-    "brand_affect": 0.25,  # shallow-to-medium but enough events for reliable PI estimation
 }
 
 _DEPTH_ORDER = [
@@ -80,7 +63,15 @@ _ALTERNATIVES = ["A", "B", "C", "D", "E", "F", "G"]
 
 
 def _dwell_mu_for(config: PersonaConfig) -> float:
-    return _DWELL_MU.get(config.persona_id, _DWELL_MU_DEFAULT)
+    """Dwell mean (log-normal mu) as a continuous function of involvement and z."""
+    z = config.latent
+    if z is None:
+        z = LatentDeviation()
+    # Base mu from involvement_score (0->5.8, 1->7.5)
+    involvement = config.psychographic.involvement_score
+    mu_base = 5.8 + 1.7 * involvement
+    # thoroughness shifts mu up; impulsivity shifts it down
+    return float(mu_base + 0.4 * z.thoroughness - 0.3 * z.impulsivity)
 
 
 def _reduce_depth(depth: InspectionDepth) -> InspectionDepth:
@@ -195,7 +186,7 @@ def _simulate_lexicographic(
     alts: list[str],
     attrs: list[str],
     params: StrategyParams,
-    n_target: int,
+    _n_target: int,
 ) -> list[tuple[str, str]]:
     """
     Price-lexicographic: inspect only the key attribute across all alternatives
@@ -218,7 +209,7 @@ def _simulate_compensatory(
     rng: np.random.Generator,
     alts: list[str],
     attrs: list[str],
-    params: StrategyParams,
+    _params: StrategyParams,
     n_target: int,
 ) -> list[tuple[str, str]]:
     """
@@ -235,7 +226,7 @@ def _simulate_satisficing(
     rng: np.random.Generator,
     alts: list[str],
     attrs: list[str],
-    params: StrategyParams,
+    _params: StrategyParams,
     n_target: int,
 ) -> list[tuple[str, str]]:
     """
@@ -253,7 +244,7 @@ def _simulate_affect_heuristic(
     rng: np.random.Generator,
     alts: list[str],
     attrs: list[str],
-    params: StrategyParams,
+    _params: StrategyParams,
     n_target: int,
 ) -> list[tuple[str, str]]:
     """
@@ -306,18 +297,22 @@ def _generate_sequence(
     params: StrategyParams,
     depth: InspectionDepth,
     time_pressure: bool,
-    persona_id: str = "",
+    z: LatentDeviation | None = None,
 ) -> list[tuple[str, str]]:
     """Build (alt, attr) inspection sequence for one trial."""
     n_cells = len(alts) * len(attrs)
-    # Per-archetype override takes precedence over depth-based fraction
-    if persona_id in _ARCHETYPE_DEPTH_FRACTION:
-        base_fraction = _ARCHETYPE_DEPTH_FRACTION[persona_id]
-    else:
-        base_fraction = _DEPTH_FRACTION[depth]
+    base_fraction = _DEPTH_FRACTION[depth]
     if time_pressure:
         base_fraction *= params.time_pressure_multiplier
-    fraction = float(np.clip(base_fraction + rng.uniform(-0.04, 0.04), 0.05, 1.0))
+    # z.thoroughness widens or narrows the fraction jitter
+    thoroughness_factor = 0.0 if z is None else z.thoroughness
+    fraction = float(
+        np.clip(
+            base_fraction + rng.uniform(-0.04, 0.04) + 0.06 * thoroughness_factor,
+            0.05,
+            1.0,
+        )
+    )
     n_target = max(1, int(round(n_cells * fraction)))
 
     if strategy == Strategy.LEXICOGRAPHIC:
@@ -374,6 +369,10 @@ def simulate_session(
     base_depth = strategy_params.inspection_depth
     dwell_mu = _dwell_mu_for(config)
 
+    z = config.latent
+    if z is None:
+        z = LatentDeviation()
+
     all_events: list[AcquisitionEvent] = []
     all_trials: list[TrialRecord] = []
 
@@ -392,8 +391,12 @@ def simulate_session(
         # Fatigue: trials 15+ -> shallower
         effective_depth = _reduce_depth(base_depth) if trial_idx >= 15 else base_depth
 
-        # Strategy lapse
-        if rng.random() < strategy_params.p_strategy_lapse:
+        # Strategy lapse modulated by impulsivity
+        impulsivity_boost = 0.12 * max(0.0, z.impulsivity)
+        effective_lapse_prob = float(
+            np.clip(strategy_params.p_strategy_lapse + impulsivity_boost, 0.0, 0.8)
+        )
+        if rng.random() < effective_lapse_prob:
             trial_strategy = Strategy.RANDOM
         else:
             trial_strategy = primary_strategy
@@ -407,8 +410,16 @@ def simulate_session(
             strategy_params,
             effective_depth,
             time_pressure,
-            persona_id=config.persona_id,
+            z=z,
         )
+
+        # Brand reinspection: with prob proportional to brand_lean, add a brand cell reinspection
+        brand_lean = z.brand_lean
+        if brand_lean > 0 and rng.random() < 0.3 * brand_lean:
+            brand_attr = "brand"
+            if brand_attr in attrs:
+                reinspect_alt = str(rng.choice(alts))
+                raw_sequence.append((reinspect_alt, brand_attr))
 
         # Build AcquisitionEvent objects
         seen_cells: set[tuple[str, str]] = set()

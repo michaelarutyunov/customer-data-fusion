@@ -13,25 +13,26 @@ from __future__ import annotations
 import numpy as np
 import structlog
 
-from schemas.persona import PersonaConfig, PriceConsciousness, Strategy
+from generator.persona_sampler import project
+from schemas.persona import PersonaConfig, PriceConsciousness
 from schemas.psychographic import PsychographicVector
 
 log = structlog.get_logger(__name__)
 
-_PRICE_CONSCIOUSNESS_MAP: dict[PriceConsciousness, float] = {
+_PRICE_CONSCIOUSNESS_BASES: dict[PriceConsciousness, float] = {
     PriceConsciousness.LOW: 0.2,
     PriceConsciousness.MEDIUM: 0.5,
     PriceConsciousness.HIGH: 0.85,
 }
 
-_STRATEGY_TO_DECISION_STYLE: dict[Strategy, str] = {
-    Strategy.LEXICOGRAPHIC: "analytical",
-    Strategy.COMPENSATORY: "analytical",
-    Strategy.SATISFICING: "dependent",
-    Strategy.AFFECT_HEURISTIC: "intuitive",
-    Strategy.RANDOM: "spontaneous",
-    Strategy.ADAPTIVE: "avoidant",
-}
+_DECISION_STYLES = [
+    "analytical",
+    "dependent",
+    "intuitive",
+    "spontaneous",
+    "avoidant",
+    "deliberate",
+]
 
 _AGE_BANDS = ["18-24", "25-34", "35-44", "45-54", "55-64", "65+"]
 _AGE_BAND_EDGES = [18, 25, 35, 45, 55, 65, 200]
@@ -51,11 +52,6 @@ def _age_to_band(age: int) -> str:
         if age < edge:
             return _AGE_BANDS[i]
     return _AGE_BANDS[-1]
-
-
-def _noisy(rng: np.random.Generator, base: float, std_factor: float = 0.05) -> float:
-    noise = rng.normal(0.0, std_factor * base)
-    return float(np.clip(base + noise, 0.0, 1.0))
 
 
 def generate_psychographic(
@@ -86,22 +82,42 @@ def generate_psychographic(
     psych = config.psychographic
     txn = config.transactions
     narrative = config.narrative
-    strategy = config.strategy
 
-    # Continuous fields with noise
-    involvement_score = _noisy(rng, psych.involvement_score)
-    maximiser_score = _noisy(rng, psych.maximiser_score)
-    risk_tolerance = _noisy(rng, psych.risk_tolerance)
-    openness_to_new = _noisy(rng, psych.openness_to_new)
+    z = config.latent
+    if z is None:
+        from schemas.persona import LatentDeviation
 
-    # Derived continuous fields
-    price_consciousness_base = _PRICE_CONSCIOUSNESS_MAP[psych.price_consciousness]
-    price_consciousness = _noisy(rng, price_consciousness_base)
+        z = LatentDeviation()
 
-    brand_sensitivity = _noisy(rng, txn.brand_loyalty)
+    # Continuous fields sourced directly from z-driven PersonaConfig values
+    involvement_score = psych.involvement_score
+    maximiser_score = psych.maximiser_score
+    risk_tolerance = psych.risk_tolerance
+    openness_to_new = psych.openness_to_new
 
-    # Decision style from primary strategy
-    decision_style_dominant = _STRATEGY_TO_DECISION_STYLE[strategy.primary_strategy]
+    # price_consciousness: continuous, driven by z.price_lean
+    price_consciousness = project(
+        z.price_lean,
+        base=_PRICE_CONSCIOUSNESS_BASES[psych.price_consciousness],
+        sigma=0.8,
+    )
+
+    # brand_sensitivity: same z.brand_lean as transaction brand_loyalty
+    brand_sensitivity = txn.brand_loyalty
+
+    # Decision style: z-conditioned softmax sample
+    logits = np.array(
+        [
+            1.5 * z.thoroughness - 1.0 * z.impulsivity,  # analytical
+            0.0,  # dependent
+            0.3 * z.impulsivity,  # intuitive
+            2.0 * z.impulsivity,  # spontaneous
+            0.5 * z.impulsivity,  # avoidant
+            1.0 * z.thoroughness,  # deliberate
+        ]
+    )
+    probs = np.exp(logits) / np.sum(np.exp(logits))
+    decision_style_dominant = str(rng.choice(_DECISION_STYLES, p=probs))
 
     # Age band: sample uniformly from age_range
     age_lo, age_hi = narrative.age_range

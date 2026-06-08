@@ -101,7 +101,7 @@ archetypes:
       price_variance_tolerance: 0.25
     psychographic:
       involvement_score: 0.80
-      maximiser_score: 0.75
+      maximiser_score: 0.60
       risk_tolerance: 0.55
       price_consciousness: MEDIUM
       openness_to_new: 0.60
@@ -138,7 +138,7 @@ archetypes:
       price_variance_tolerance: 0.20
     psychographic:
       involvement_score: 0.50
-      maximiser_score: 0.25
+      maximiser_score: 0.45
       risk_tolerance: 0.45
       price_consciousness: MEDIUM
       openness_to_new: 0.45
@@ -227,6 +227,11 @@ archetypes:
     strategy:
       primary_strategy: adaptive
       inspection_depth: variable
+      # Per-trial strategy mixture weights (sum to 1.0).
+      # adaptive randomly draws from these each trial based on board complexity.
+      strategy_mixture_weights:
+        satisficing: 0.50
+        compensatory: 0.50
       attribute_weights:
         price: 0.30
         quality: 0.30
