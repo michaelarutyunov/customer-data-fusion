@@ -77,9 +77,15 @@ class TraceDataset(Dataset):
     def __len__(self) -> int:
         return len(self.tokens_list)
 
-    def __getitem__(self, idx: int) -> tuple[Tensor, Tensor, int, str]:
+    def __getitem__(self, idx: int) -> tuple[Tensor, Tensor, int, str, str]:
         tokens, mask = self.tokens_list[idx]
-        return tokens, mask, self.persona_labels[idx], self.persona_ids[idx]
+        return (
+            tokens,
+            mask,
+            self.persona_labels[idx],
+            self.persona_ids[idx],
+            self.participant_ids[idx],
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -286,6 +292,34 @@ def nt_xent_loss(
     return loss
 
 
+def nt_xent_views(
+    emb_v1: Tensor,
+    emb_v2: Tensor,
+    temperature: float = DEFAULT_TEMPERATURE,
+) -> Tensor:
+    """NT-Xent for position-matched participant split-view pairs.
+
+    emb_v1[i] and emb_v2[i] are the positive pair (two trial-subset mean-pools
+    for the same participant). All other cross-participant pairs are negatives.
+    """
+    B = emb_v1.size(0)
+    if B < 2:
+        return torch.tensor(0.0, device=emb_v1.device, requires_grad=True)
+
+    embs = F.normalize(torch.cat([emb_v1, emb_v2], dim=0), dim=1)  # (2B, D)
+    sim = torch.mm(embs, embs.t()) / temperature  # (2B, 2B)
+
+    labels = torch.cat(
+        [
+            torch.arange(B, 2 * B, device=emb_v1.device),
+            torch.arange(0, B, device=emb_v1.device),
+        ]
+    )
+    mask = torch.eye(2 * B, dtype=torch.bool, device=emb_v1.device)
+    sim = sim.masked_fill(mask, float("-inf"))
+    return F.cross_entropy(sim, labels)
+
+
 def cross_entropy_loss(logits: Tensor, labels: Tensor) -> Tensor:
     """Supervised cross-entropy loss for persona archetype classification."""
     return F.cross_entropy(logits, labels)
@@ -403,15 +437,16 @@ def build_dataset(
 
 
 def collate_fn(
-    batch: list[tuple[Tensor, Tensor, int, str]],
-) -> tuple[Tensor, Tensor, Tensor, list[str]]:
-    """Collate a batch of (tokens, mask, label, persona_id) tuples."""
-    tokens_masks = [(t, m) for t, m, _, _ in batch]
-    labels = torch.tensor([lbl for _, _, lbl, _ in batch], dtype=torch.long)
-    persona_ids = [p for _, _, _, p in batch]
+    batch: list[tuple[Tensor, Tensor, int, str, str]],
+) -> tuple[Tensor, Tensor, Tensor, list[str], list[str]]:
+    """Collate a batch of (tokens, mask, label, persona_id, participant_id) tuples."""
+    tokens_masks = [(t, m) for t, m, _, _, _ in batch]
+    labels = torch.tensor([lbl for _, _, lbl, _, _ in batch], dtype=torch.long)
+    persona_ids = [p for _, _, _, p, _ in batch]
+    participant_ids = [pid for _, _, _, _, pid in batch]
 
     padded_tokens, padded_mask = collate_batch(tokens_masks)
-    return padded_tokens, padded_mask, labels, persona_ids
+    return padded_tokens, padded_mask, labels, persona_ids, participant_ids
 
 
 def train(
@@ -424,6 +459,8 @@ def train(
     seed: int = DEFAULT_SEED,
     device: str = "cpu",
     save_path: Path | None = None,
+    lambda_contrastive: float = 0.5,
+    nt_xent_temperature: float = DEFAULT_TEMPERATURE,
 ) -> TraceEncoder:
     """
     Train the trace encoder with supervised cross-entropy classification.
@@ -544,7 +581,9 @@ def train(
             "n_classes": n_classes,
             "train_samples": len(train_dataset),
             "val_samples": len(val_dataset),
-            "objective": "supervised_cross_entropy",
+            "objective": "ce+nt_xent_split_view",
+            "lambda_contrastive": lambda_contrastive,
+            "nt_xent_temperature": nt_xent_temperature,
         }
     )
 
@@ -553,76 +592,111 @@ def train(
     patience_counter = 0
 
     for epoch in range(n_epochs):
-        # Re-shuffle sampler each epoch
+        # Re-shuffle sampler each epoch (also re-randomises trial splits below)
         stratified_sampler.set_epoch(epoch)
 
         # --- Training ---
         encoder.train()
         epoch_cls_loss = 0.0
+        epoch_nt_loss = 0.0
         n_batches = 0
 
-        for tokens, mask, labels, _ in train_loader:
+        for tokens, mask, labels, _, participant_ids_batch in train_loader:
             tokens = tokens.to(device)
             mask = mask.to(device)
             labels = labels.to(device)
 
             optimizer.zero_grad()
 
-            _, logits = encoder.forward_with_logits(tokens, mask)
-            loss = cross_entropy_loss(logits, labels)
+            # CE loss on individual trial embeddings
+            trial_embs, logits = encoder.forward_with_logits(tokens, mask)
+            cls_loss = cross_entropy_loss(logits, labels)
+
+            # NT-Xent: per-epoch random 50/50 split of trials per participant
+            # Group trial embeddings by participant_id
+            pid_to_embs: dict[str, list[Tensor]] = defaultdict(list)
+            for emb, pid in zip(trial_embs, participant_ids_batch):
+                pid_to_embs[pid].append(emb)
+
+            v1_list: list[Tensor] = []
+            v2_list: list[Tensor] = []
+            for pid, embs in pid_to_embs.items():
+                if len(embs) < 2:
+                    continue
+                perm = torch.randperm(len(embs), device=device)
+                half = len(embs) // 2
+                v1_list.append(torch.stack([embs[i] for i in perm[:half]]).mean(0))
+                v2_list.append(torch.stack([embs[i] for i in perm[half:]]).mean(0))
+
+            if len(v1_list) >= 2:
+                nt_loss = nt_xent_views(
+                    torch.stack(v1_list),
+                    torch.stack(v2_list),
+                    nt_xent_temperature,
+                )
+            else:
+                nt_loss = torch.tensor(0.0, device=device)
+
+            loss = cls_loss + lambda_contrastive * nt_loss
             loss.backward()
             optimizer.step()
 
-            epoch_cls_loss += loss.item()
+            epoch_cls_loss += cls_loss.item()
+            epoch_nt_loss += nt_loss.item()
             n_batches += 1
 
         avg_train_cls = epoch_cls_loss / max(n_batches, 1)
+        avg_train_nt = epoch_nt_loss / max(n_batches, 1)
 
         # --- Validation ---
         encoder.eval()
         val_cls_loss = 0.0
-        val_batches = 0
+        val_correct = 0
+        val_total = 0
 
         with torch.no_grad():
-            for tokens, mask, labels, _ in val_loader:
+            for tokens, mask, labels, _, _ in val_loader:
                 tokens = tokens.to(device)
                 mask = mask.to(device)
                 labels = labels.to(device)
 
                 _, logits = encoder.forward_with_logits(tokens, mask)
                 loss = cross_entropy_loss(logits, labels)
-
                 val_cls_loss += loss.item()
-                val_batches += 1
+                val_correct += (logits.argmax(dim=1) == labels).sum().item()
+                val_total += labels.size(0)
 
-        avg_val_loss = val_cls_loss / max(val_batches, 1)
+        avg_val_loss = val_cls_loss / max(n_batches, 1)
+        val_acc = val_correct / max(val_total, 1)
 
         mlflow.log_metrics(
             {
                 "train_cls_loss": avg_train_cls,
+                "train_nt_loss": avg_train_nt,
                 "val_cls_loss": avg_val_loss,
+                "val_acc": val_acc,
             },
             step=epoch,
         )
 
         logger.info(
-            "Epoch %d/%d — train_cls_loss=%.4f val_cls_loss=%.4f",
+            "Epoch %d/%d — ce=%.4f nt=%.4f val_loss=%.4f val_acc=%.4f",
             epoch + 1,
             n_epochs,
             avg_train_cls,
+            avg_train_nt,
             avg_val_loss,
+            val_acc,
         )
 
         # Early stopping on validation loss
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
             patience_counter = 0
-            # Save best encoder backbone weights
             _save_path = (
                 save_path if save_path is not None else CHECKPOINT_PATHS["trace"]
             )
             _save_path.parent.mkdir(parents=True, exist_ok=True)
-            # Save only backbone (exclude classification head)
             backbone_state = {
                 k: v
                 for k, v in encoder.state_dict().items()

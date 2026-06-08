@@ -64,7 +64,7 @@ def load_encoders(device: str = "cpu") -> dict[str, nn.Module]:
     encoders["trace"] = trace_encoder
 
     # Transaction encoder
-    tx_encoder = TransactionEncoder(projection_dim=16, gru_hidden=32).to(device)
+    tx_encoder = TransactionEncoder().to(device)
     tx_state = torch.load(
         CHECKPOINT_PATHS["transaction"], map_location=device, weights_only=True
     )
@@ -405,6 +405,56 @@ def build_cache(
 # ---------------------------------------------------------------------------
 
 
+def nt_xent_fusion(
+    emb_v1: torch.Tensor,
+    emb_v2: torch.Tensor,
+    temperature: float = 0.07,
+) -> torch.Tensor:
+    """NT-Xent (SimCLR-style) for a matched pair of fused embedding views.
+
+    emb_v1[i] and emb_v2[i] are two modality-dropout augmented views of the same
+    participant i. All other cross-participant pairs are negatives.
+
+    Parameters
+    ----------
+    emb_v1, emb_v2 : Tensor, shape (B, D)
+        L2-normalised CDT embeddings from two dropout-augmented forward passes.
+    temperature : float
+
+    Returns
+    -------
+    Scalar loss tensor.
+    """
+    B = emb_v1.size(0)
+    if B < 2:
+        return torch.tensor(0.0, device=emb_v1.device, requires_grad=True)
+
+    embs = F.normalize(torch.cat([emb_v1, emb_v2], dim=0), dim=1)  # (2B, D)
+    sim = torch.mm(embs, embs.t()) / temperature  # (2B, 2B)
+
+    labels = torch.cat(
+        [
+            torch.arange(B, 2 * B, device=emb_v1.device),
+            torch.arange(0, B, device=emb_v1.device),
+        ]
+    )
+    mask = torch.eye(2 * B, dtype=torch.bool, device=emb_v1.device)
+    sim = sim.masked_fill(mask, float("-inf"))
+    return F.cross_entropy(sim, labels)
+
+
+def _apply_modality_dropout(
+    batch_embs: torch.Tensor, p_dropout: float, device: str
+) -> torch.Tensor:
+    """Apply independent per-modality dropout to a [B, 4, 128] embedding batch."""
+    B = batch_embs.shape[0]
+    masks = [torch.rand(B, 1, device=device) >= p_dropout for _ in range(4)]
+    result = batch_embs.clone()
+    for i in range(4):
+        result[:, i] = result[:, i] * masks[i].float()
+    return result
+
+
 def train(
     *,
     cache_path: Optional[Path] = None,
@@ -415,8 +465,14 @@ def train(
     device: str = "cpu",
     log_mlflow: bool = True,
     phase: str = "2",
+    lambda_contrastive: float = 0.5,
+    nt_xent_temperature: float = 0.07,
 ) -> LateFusionMetaLearner:
-    """Train the fusion meta-learner.
+    """Train the fusion meta-learner with NT-Xent + CE multi-task objective.
+
+    Two modality-dropout augmented views of each participant's fused embedding
+    are used as NT-Xent positive pairs. Other participants in the batch are
+    negatives. A CE auxiliary head retains archetype separability (Tier 1 gate).
 
     Parameters
     ----------
@@ -429,25 +485,22 @@ def train(
     lr : float
         Learning rate.
     p_dropout : float
-        Modality dropout probability during training.
+        Per-modality dropout probability for augmentation views (default 0.2).
     device : str
         Target device ("cpu" or "cuda").
     log_mlflow : bool
         Whether to log to MLflow.
     phase : str
         Meta-learner phase ("1" or "2").
+    lambda_contrastive : float
+        Weight for NT-Xent loss. Total = CE + lambda * NT-Xent.
+    nt_xent_temperature : float
+        NT-Xent temperature (default 0.07).
 
     Returns
     -------
     LateFusionMetaLearner
         Trained meta-learner model.
-
-    Notes
-    -----
-    - Encoders are frozen during fusion training.
-    - L2-normalisation is applied to each modality embedding before concatenation.
-    - Modality dropout (p=0.2) is applied independently to each modality during training.
-    - Partial-modality inference is supported: zero the 128-dim slice for missing modalities.
     """
     if cache_path is None:
         cache_path = Path("models/fusion_embeddings_cache.pt")
@@ -470,24 +523,17 @@ def train(
     val_indices = torch.tensor([participant_to_idx[pid] for pid in val_ids])  # type: ignore[reportPrivateImportUsage]
 
     # Extract embeddings and labels
-    train_embs = {
-        mod: embeddings[mod][train_indices]
-        for mod in ["trace", "transaction", "text", "psychographic"]
-    }
+    _MODALITIES = ["trace", "transaction", "text", "psychographic"]
+    train_embs = {mod: embeddings[mod][train_indices] for mod in _MODALITIES}
     train_labels = embeddings["labels"][train_indices]
 
-    val_embs = {
-        mod: embeddings[mod][val_indices]
-        for mod in ["trace", "transaction", "text", "psychographic"]
-    }
+    val_embs = {mod: embeddings[mod][val_indices] for mod in _MODALITIES}
     val_labels = embeddings["labels"][val_indices]
 
-    # Create dataset
     def make_dataset(embs_dict, labels):
-        emb_list = [
-            embs_dict[mod] for mod in ["trace", "transaction", "text", "psychographic"]
-        ]
-        all_embs = torch.stack(emb_list, dim=1)  # [N, 4, 128]
+        all_embs = torch.stack(
+            [embs_dict[mod] for mod in _MODALITIES], dim=1
+        )  # [N, 4, 128]
         return TensorDataset(all_embs, labels)
 
     train_ds = make_dataset(train_embs, train_labels)
@@ -504,109 +550,111 @@ def train(
         optimizer, mode="max", factor=0.5, patience=5
     )
 
-    # Training loop
     best_val_acc = 0.0
     patience_counter = 0
     max_patience = 10
 
     for epoch in range(n_epochs):
-        # Training
         model.train()
-        epoch_loss = 0.0
+        epoch_ce = 0.0
+        epoch_nt = 0.0
         n_batches = 0
 
         for batch_embs, batch_labels in train_loader:
             batch_embs = batch_embs.to(device)
             batch_labels = batch_labels.to(device)
 
-            # Apply modality dropout
-            if model.training:
-                batch_size = batch_embs.shape[0]
-                dropout_masks = [
-                    torch.rand(batch_size, 1, device=device) >= p_dropout
-                    for _ in range(4)
-                ]
-                for i in range(4):
-                    batch_embs[:, i] = batch_embs[:, i] * dropout_masks[i].float()
+            # View 1: modality-dropout augmented fusion input
+            v1 = _apply_modality_dropout(batch_embs, p_dropout, device)
+            norm_v1 = [F.normalize(v1[:, i], p=2, dim=-1) for i in range(4)]
+            fusion_v1 = torch.cat(norm_v1, dim=-1)  # [B, 512]
 
-            # L2-normalise each modality
-            norm_embs = [F.normalize(batch_embs[:, i], p=2, dim=-1) for i in range(4)]
-            fusion_input = torch.cat(
-                norm_embs, dim=-1
-            )  # [B, 512]  # type: ignore[reportPrivateImportUsage]
+            # View 2: independent modality-dropout augmented fusion input
+            v2 = _apply_modality_dropout(batch_embs, p_dropout, device)
+            norm_v2 = [F.normalize(v2[:, i], p=2, dim=-1) for i in range(4)]
+            fusion_v2 = torch.cat(norm_v2, dim=-1)
 
-            # Forward pass
-            logits = model(fusion_input)
-            loss = criterion(logits, batch_labels)
+            # CE loss on view 1 (archetype auxiliary head)
+            logits, emb_v1 = model.forward_with_embedding(fusion_v1)
+            ce_loss = criterion(logits, batch_labels)
 
-            # Backward pass
+            # NT-Xent: same participant across two dropout views
+            _, emb_v2 = model.forward_with_embedding(fusion_v2)
+            nt_loss = nt_xent_fusion(emb_v1, emb_v2, nt_xent_temperature)
+
+            loss = ce_loss + lambda_contrastive * nt_loss
+
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
-            epoch_loss += loss.item()
+            epoch_ce += ce_loss.item()
+            epoch_nt += nt_loss.item()
             n_batches += 1
 
-        avg_train_loss = epoch_loss / n_batches
+        avg_ce = epoch_ce / n_batches
+        avg_nt = epoch_nt / n_batches
 
         # Validation
         model.eval()
         val_correct = 0
         val_total = 0
-        val_loss = 0.0
+        val_loss_sum = 0.0
 
         with torch.no_grad():
             for batch_embs, batch_labels in val_loader:
                 batch_embs = batch_embs.to(device)
                 batch_labels = batch_labels.to(device)
 
-                # No dropout during validation
                 norm_embs = [
                     F.normalize(batch_embs[:, i], p=2, dim=-1) for i in range(4)
                 ]
-                fusion_input = torch.cat(norm_embs, dim=-1)  # type: ignore[reportPrivateImportUsage]
+                fusion_input = torch.cat(norm_embs, dim=-1)
 
-                logits = model(fusion_input)
-                loss = criterion(logits, batch_labels)
-                val_loss += loss.item()
+                logits, _ = model.forward_with_embedding(fusion_input)
+                val_loss_sum += criterion(logits, batch_labels).item()
 
-                predictions = logits.argmax(dim=-1)
-                val_correct += (predictions == batch_labels).sum().item()
+                val_correct += (logits.argmax(dim=-1) == batch_labels).sum().item()
                 val_total += batch_labels.shape[0]
 
-        avg_val_loss = val_loss / len(val_loader)
+        avg_val_loss = val_loss_sum / len(val_loader)
         val_acc = val_correct / val_total
 
         print(
             f"Epoch {epoch + 1}/{n_epochs}: "
-            f"train_loss={avg_train_loss:.4f}, val_loss={avg_val_loss:.4f}, val_acc={val_acc:.4f}"
+            f"ce={avg_ce:.4f}  nt={avg_nt:.4f}  "
+            f"val_loss={avg_val_loss:.4f}  val_acc={val_acc:.4f}"
         )
 
         if log_mlflow:
-            mlflow.log_metric("train_loss", avg_train_loss, step=epoch)
-            mlflow.log_metric("val_loss", avg_val_loss, step=epoch)
-            mlflow.log_metric("val_acc", val_acc, step=epoch)
+            mlflow.log_metrics(
+                {
+                    "train_ce_loss": avg_ce,
+                    "train_nt_loss": avg_nt,
+                    "val_loss": avg_val_loss,
+                    "val_acc": val_acc,
+                },
+                step=epoch,
+            )
 
-        # Learning rate scheduling
         scheduler.step(val_acc)
 
-        # Early stopping
         if val_acc > best_val_acc:
             best_val_acc = val_acc
             patience_counter = 0
-
-            # Save checkpoint
             checkpoint_path = CHECKPOINT_PATHS["fusion"]
             checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
             torch.save(model.state_dict(), checkpoint_path)
-            print(f"  → New best model! Saved to {checkpoint_path}")
+            print(f"  → New best model saved to {checkpoint_path}")
         else:
             patience_counter += 1
             if patience_counter >= max_patience:
-                print(f"  → Early stopping triggered (patience={max_patience})")
+                print(
+                    f"  → Early stopping at epoch {epoch + 1} (patience={max_patience})"
+                )
                 break
 
-    print(f"\nTraining complete. Best val accuracy: {best_val_acc:.4f}")
+    print(f"\nTraining complete. Best val_acc: {best_val_acc:.4f}")
     return model
 
 

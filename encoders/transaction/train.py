@@ -1,12 +1,18 @@
 """
 Transaction encoder training pipeline.
 
-Self-supervised training via next-brand_tier prediction. Given transaction
-history t1..tn, predict the brand_tier of t_{n+1}. Uses cross-entropy loss
-on a 4-class classification task.
+Multi-task objective: CE (archetype classification) + NT-Xent (individual identity).
 
-Training configuration (from SPEC.md):
-    - Batch size: 128 (participant-level)
+Each participant's transaction history is split at the median timestamp into two
+chronological halves. Both halves are encoded via the GRU to produce participant-level
+embeddings; NT-Xent treats the two halves of the same participant as a positive pair.
+Archetype CE uses the full-sequence embedding.
+
+Participants with fewer than 4 transactions are excluded from the NT-Xent loss
+(CE loss still applied); a warning is logged at dataset load time.
+
+Training configuration:
+    - Batch size: 64 (participant-level)
     - Learning rate: 5e-4
     - Epochs: 30
     - Optimiser: AdamW, weight_decay=1e-4
@@ -26,18 +32,18 @@ import mlflow
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.nn.utils.rnn import pack_padded_sequence
 from torch.utils.data import DataLoader, Dataset
 
-from schemas import CHECKPOINT_PATHS
+from schemas import CHECKPOINT_PATHS, PERSONA_TO_IDX
 from schemas.transaction import TransactionRecord
 from encoders.transaction.features import (
     MAX_SEQ_LEN,
     TOKEN_DIM,
     TxVocabulary,
-    sort_transactions_most_recent_first,
 )
-from encoders.transaction.model import NextBrandTierHead, TransactionEncoder
+from encoders.transaction.model import TransactionEncoder
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +51,7 @@ DATA_DIR = Path("data/synthetic")
 TRANSACTIONS_FILE = DATA_DIR / "transactions.jsonl"
 
 # Training defaults
-DEFAULT_BATCH_SIZE = 128
+DEFAULT_BATCH_SIZE = 64
 DEFAULT_LR = 5e-4
 DEFAULT_EPOCHS = 30
 DEFAULT_WEIGHT_DECAY = 1e-4
@@ -55,17 +61,43 @@ DEFAULT_GRU_DROPOUT = 0.1
 DEFAULT_PROJECTION_DIM = 64
 DEFAULT_PATIENCE = 5
 RANDOM_SEED = 42
+MIN_TX_FOR_SPLIT = (
+    4  # participants below this threshold skip NT-Xent (CE still applied)
+)
+N_ARCHETYPE_CLASSES = 7
 
 
-class TransactionSequenceDataset(Dataset):
-    """Dataset that groups TransactionRecords by participant.
+# ---------------------------------------------------------------------------
+# Dataset
+# ---------------------------------------------------------------------------
 
-    Each item is a tuple of:
-      (token_seq, brand_tier_targets, length)
-    where:
-      - token_seq: (T, 20) tensor of token vectors (input = t1..tn)
-      - brand_tier_targets: (T,) long tensor of brand_tier indices (target = t2..t_{n+1})
-      - length: actual sequence length (int)
+
+# Per-participant item: (full_tokens, full_len, half1_tokens, half1_len,
+#                        half2_tokens, half2_len, persona_label, nt_xent_eligible)
+_Item = tuple[
+    torch.Tensor,
+    int,
+    torch.Tensor,
+    int,
+    torch.Tensor,
+    int,
+    int,
+    bool,
+]
+
+
+class SplitTransactionDataset(Dataset):
+    """Per-participant dataset with chronological split views for NT-Xent.
+
+    Each item stores:
+      - full sequence (oldest-first) for archetype CE
+      - first (oldest) half and second (most-recent) half for NT-Xent
+      - persona_label for archetype CE
+      - nt_xent_eligible: False when < MIN_TX_FOR_SPLIT transactions
+
+    Transactions are sorted oldest-first (ascending days_before_session) so
+    the GRU reads the history in chronological order. The split is at the
+    median: half1 = oldest transactions, half2 = most-recent transactions.
     """
 
     def __init__(
@@ -74,76 +106,170 @@ class TransactionSequenceDataset(Dataset):
         vocab: TxVocabulary,
         max_seq_len: int = MAX_SEQ_LEN,
     ) -> None:
-        self.vocab = vocab
-        self.max_seq_len = max_seq_len
-
-        # Group by participant, sort most-recent-first
         by_participant: dict[str, list[TransactionRecord]] = defaultdict(list)
         for r in records:
             by_participant[r.participant_id].append(r)
 
-        self.sequences: list[tuple[torch.Tensor, torch.Tensor, int]] = []
+        n_skipped = 0
+        self.items: list[_Item] = []
+
         for _, txs in by_participant.items():
-            txs = sort_transactions_most_recent_first(txs)[:max_seq_len]
+            # Sort oldest-first (largest days_before_session = furthest in the past)
+            txs_sorted = sorted(txs, key=lambda r: r.days_before_session, reverse=True)
+            txs_sorted = txs_sorted[:max_seq_len]
+            n = len(txs_sorted)
 
-            # Build brand_tier target indices for all records
-            brand_tier_indices = [vocab.brand_tier_index(r.brand_tier) for r in txs]
+            full_tokens = vocab.encode_sequence(txs_sorted).detach()
+            persona_label = PERSONA_TO_IDX[txs_sorted[0].persona_id]
 
-            # Input: t1..t(n-1), Target: t2..tn (next brand_tier prediction)
-            # For input, we need token vectors for t1..t(n-1)
-            if len(txs) < 2:
-                # Not enough transactions for next-step prediction, but
-                # include for embedding — target is just the last one
-                input_txs = txs
-                targets = brand_tier_indices
+            eligible = n >= MIN_TX_FOR_SPLIT
+            if not eligible:
+                n_skipped += 1
+                # Dummy half tensors (won't be used; eligible=False guards usage)
+                half1_tokens = full_tokens
+                half1_len = n
+                half2_tokens = full_tokens
+                half2_len = n
             else:
-                input_txs = txs[:-1]
-                targets = brand_tier_indices[1:]
+                mid = n // 2
+                half1 = txs_sorted[:mid]  # oldest
+                half2 = txs_sorted[mid:]  # most recent
+                half1_tokens = vocab.encode_sequence(half1).detach()
+                half2_tokens = vocab.encode_sequence(half2).detach()
+                half1_len = len(half1)
+                half2_len = len(half2)
 
-            token_seq = vocab.encode_sequence(input_txs)  # (T, 20)
-            target_tensor = torch.tensor(targets, dtype=torch.long)
+            self.items.append(
+                (
+                    full_tokens,
+                    n,
+                    half1_tokens,
+                    half1_len,
+                    half2_tokens,
+                    half2_len,
+                    persona_label,
+                    eligible,
+                )
+            )
 
-            # Detach — dataset tensors must not carry gradient history.
-            # token_seq inherits requires_grad=True from vocab embedding
-            # lookups, which causes "double backward" errors across epochs.
-            self.sequences.append((token_seq.detach(), target_tensor, len(input_txs)))
+        if n_skipped:
+            logger.warning(
+                "%d participants have fewer than %d transactions and will be "
+                "excluded from the NT-Xent loss (CE loss still applied).",
+                n_skipped,
+                MIN_TX_FOR_SPLIT,
+            )
 
     def __len__(self) -> int:
-        return len(self.sequences)
+        return len(self.items)
 
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, int]:
-        return self.sequences[idx]
+    def __getitem__(self, idx: int) -> _Item:
+        return self.items[idx]
 
 
 def collate_fn(
-    batch: list[tuple[torch.Tensor, torch.Tensor, int]],
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Collate variable-length sequences into a padded batch.
+    batch: list[_Item],
+) -> tuple[
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    list[bool],
+]:
+    """Collate a batch of SplitTransactionDataset items.
 
-    Sorts by descending length for pack_padded_sequence compatibility.
+    Produces three padded tensors (full, half1, half2), each sorted by
+    descending length for pack_padded_sequence compatibility.
 
     Returns
     -------
-    token_seqs : Tensor, shape (B, T_max, 20)
-    targets : Tensor, shape (B, T_max)
-    lengths : Tensor, shape (B,)
+    full_tokens   : (B, T_full, TOKEN_DIM)
+    full_lengths  : (B,)
+    h1_tokens     : (B, T_h1, TOKEN_DIM)
+    h1_lengths    : (B,)
+    h2_tokens     : (B, T_h2, TOKEN_DIM)
+    h2_lengths    : (B,)
+    labels        : (B,)  long
+    eligible      : list[bool], length B
     """
-    # Sort by descending length
-    batch.sort(key=lambda x: x[2], reverse=True)
+    (full_seqs, full_lens, h1_seqs, h1_lens, h2_seqs, h2_lens, labels, eligible) = zip(
+        *batch
+    )
 
-    token_seqs, targets, lengths = zip(*batch)
-    lengths_t = torch.tensor(lengths, dtype=torch.long)
-    max_len = max(lengths)
+    def _pad(
+        seqs: tuple[torch.Tensor, ...], lens: tuple[int, ...]
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        max_l = max(lens)
+        B = len(seqs)
+        out = torch.zeros(B, max_l, TOKEN_DIM)
+        for i, (s, seq_len) in enumerate(zip(seqs, lens)):
+            out[i, :seq_len] = s[:seq_len]
+        return out, torch.tensor(lens, dtype=torch.long)
 
-    B = len(batch)
-    padded_tokens = torch.zeros(B, max_len, TOKEN_DIM)
-    padded_targets = torch.zeros(B, max_len, dtype=torch.long)
+    full_t, full_l = _pad(full_seqs, full_lens)
+    h1_t, h1_l = _pad(h1_seqs, h1_lens)
+    h2_t, h2_l = _pad(h2_seqs, h2_lens)
 
-    for i, (seq, tgt, length) in enumerate(zip(token_seqs, targets, lengths)):
-        padded_tokens[i, :length] = seq
-        padded_targets[i, :length] = tgt
+    # Sort by descending full length for pack_padded_sequence
+    order = torch.argsort(full_l, descending=True)
+    eligible_list = [eligible[i] for i in order.tolist()]
 
-    return padded_tokens, padded_targets, lengths_t
+    return (
+        full_t[order],
+        full_l[order],
+        h1_t[order],
+        h1_l[order],
+        h2_t[order],
+        h2_l[order],
+        torch.tensor([labels[i] for i in order.tolist()], dtype=torch.long),
+        eligible_list,
+    )
+
+
+# ---------------------------------------------------------------------------
+# NT-Xent for split-view pairs
+# ---------------------------------------------------------------------------
+
+
+def nt_xent_views(
+    emb_v1: torch.Tensor,
+    emb_v2: torch.Tensor,
+    temperature: float = 0.07,
+) -> torch.Tensor:
+    """NT-Xent for position-matched split-history participant pairs."""
+    B = emb_v1.size(0)
+    if B < 2:
+        return torch.tensor(0.0, device=emb_v1.device, requires_grad=True)
+
+    embs = F.normalize(torch.cat([emb_v1, emb_v2], dim=0), dim=1)
+    sim = torch.mm(embs, embs.t()) / temperature
+
+    labels = torch.cat(
+        [
+            torch.arange(B, 2 * B, device=emb_v1.device),
+            torch.arange(0, B, device=emb_v1.device),
+        ]
+    )
+    mask = torch.eye(2 * B, dtype=torch.bool, device=emb_v1.device)
+    sim = sim.masked_fill(mask, float("-inf"))
+    return F.cross_entropy(sim, labels)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _encode_sequence(
+    encoder: TransactionEncoder,
+    token_seqs: torch.Tensor,
+    lengths: torch.Tensor,
+) -> torch.Tensor:
+    """Run the GRU encoder and return (B, EMBEDDING_DIM) participant embeddings."""
+    return encoder(token_seqs, lengths)
 
 
 def split_by_participant(
@@ -151,10 +277,7 @@ def split_by_participant(
     val_fraction: float = 0.2,
     seed: int = RANDOM_SEED,
 ) -> tuple[list[TransactionRecord], list[TransactionRecord]]:
-    """Split records into train/val by participant_id (no leakage).
-
-    Returns (train_records, val_records).
-    """
+    """Split records into train/val by participant_id (no leakage)."""
     participant_ids = sorted({r.participant_id for r in records})
     rng = np.random.default_rng(seed)
     rng.shuffle(participant_ids)
@@ -167,11 +290,9 @@ def split_by_participant(
     val_records = [r for r in records if r.participant_id in val_ids]
 
     logger.info(
-        "Split: %d train participants (%d records), %d val participants (%d records)",
+        "Split: %d train participants, %d val participants",
         len(train_ids),
-        len(train_records),
         len(val_ids),
-        len(val_records),
     )
     return train_records, val_records
 
@@ -186,104 +307,9 @@ def load_records(path: Path | str | None = None) -> list[TransactionRecord]:
     return records
 
 
-def train_epoch(
-    encoder: TransactionEncoder,
-    prediction_head: NextBrandTierHead,
-    dataloader: DataLoader,
-    optimiser: torch.optim.Optimizer,
-    device: torch.device,
-) -> float:
-    """Train for one epoch. Returns mean loss."""
-    encoder.train()
-    prediction_head.train()
-    total_loss = 0.0
-    n_batches = 0
-
-    for token_seqs, targets, lengths in dataloader:
-        token_seqs = token_seqs.to(device)
-        targets = targets.to(device)
-        lengths = lengths.to(device)
-
-        # Project tokens and run through GRU
-        projected = torch.relu(encoder.token_proj(token_seqs))
-
-        packed = pack_padded_sequence(
-            projected, lengths.cpu(), batch_first=True, enforce_sorted=True
-        )
-        gru_output_packed, _ = encoder.gru(packed)
-
-        # Unpack GRU outputs to get hidden state at each step
-        gru_output, _ = torch.nn.utils.rnn.pad_packed_sequence(
-            gru_output_packed, batch_first=True
-        )
-
-        # Predict next brand_tier at each step
-        logits = prediction_head(gru_output)  # (B, T, 4)
-
-        # Build mask for valid positions only
-        B, T, _ = logits.shape
-        mask = torch.arange(T, device=device).unsqueeze(0) < lengths.unsqueeze(1)
-
-        # Compute loss only on valid positions
-        loss_fn = nn.CrossEntropyLoss(reduction="none")
-        losses = loss_fn(
-            logits.view(-1, 4),
-            targets.view(-1),
-        )
-        losses = losses.view(B, T) * mask
-        loss = losses.sum() / mask.sum()
-
-        optimiser.zero_grad()
-        loss.backward()
-        optimiser.step()
-
-        total_loss += loss.item()
-        n_batches += 1
-
-    return total_loss / max(n_batches, 1)
-
-
-@torch.no_grad()
-def eval_epoch(
-    encoder: TransactionEncoder,
-    prediction_head: NextBrandTierHead,
-    dataloader: DataLoader,
-    device: torch.device,
-) -> float:
-    """Evaluate on validation set. Returns mean loss."""
-    encoder.eval()
-    prediction_head.eval()
-    total_loss = 0.0
-    n_batches = 0
-
-    for token_seqs, targets, lengths in dataloader:
-        token_seqs = token_seqs.to(device)
-        targets = targets.to(device)
-        lengths = lengths.to(device)
-
-        projected = torch.relu(encoder.token_proj(token_seqs))
-        packed = pack_padded_sequence(
-            projected, lengths.cpu(), batch_first=True, enforce_sorted=True
-        )
-        gru_output_packed, _ = encoder.gru(packed)
-        gru_output, _ = torch.nn.utils.rnn.pad_packed_sequence(
-            gru_output_packed, batch_first=True
-        )
-
-        logits = prediction_head(gru_output)
-
-        B, T, _ = logits.shape
-        mask = torch.arange(T, device=device).unsqueeze(0) < lengths.unsqueeze(1)
-
-        loss_fn = nn.CrossEntropyLoss(reduction="none")
-        losses = loss_fn(logits.view(-1, 4), targets.view(-1))
-        losses = losses.view(B, T) * mask
-        loss = losses.sum() / mask.sum()
-
-        total_loss += loss.item()
-        n_batches += 1
-
-    return total_loss / max(n_batches, 1)
+# ---------------------------------------------------------------------------
+# Training
+# ---------------------------------------------------------------------------
 
 
 def train(
@@ -299,53 +325,46 @@ def train(
     patience: int = DEFAULT_PATIENCE,
     seed: int = RANDOM_SEED,
     device: str | None = None,
+    lambda_contrastive: float = 0.5,
+    nt_xent_temperature: float = 0.07,
 ) -> TransactionEncoder:
-    """Train the transaction encoder with next-brand_tier prediction.
+    """Train the transaction encoder with CE (archetype) + NT-Xent (individual identity).
+
+    Split-history views: each participant's transactions are split at the
+    median timestamp into oldest-half and most-recent-half. Both halves are
+    encoded via the GRU; NT-Xent treats them as a positive pair.
+    Archetype CE uses the full-sequence GRU embedding.
 
     Parameters
     ----------
-    records : list[TransactionRecord] or None
+    records
         Transaction records. If None, loads from data/synthetic/transactions.jsonl.
-    batch_size : int
+    batch_size
         Participant-level batch size.
-    lr : float
-        Learning rate.
-    n_epochs : int
-        Maximum training epochs.
-    weight_decay : float
-        AdamW weight decay.
-    gru_hidden : int
-        GRU hidden size.
-    gru_layers : int
-        Number of GRU layers.
-    gru_dropout : float
-        Dropout between GRU layers.
-    projection_dim : int
-        Token projection dimension.
-    patience : int
-        Early stopping patience (epochs without improvement).
-    seed : int
+    lr, weight_decay
+        AdamW hyperparameters.
+    n_epochs, patience
+        Training budget and early stopping.
+    gru_hidden, gru_layers, gru_dropout, projection_dim
+        Encoder architecture (must match existing checkpoint dims if fine-tuning).
+    seed
         Random seed for train/val split.
-    device : str or None
+    device
         Device string. Defaults to "cuda" if available, else "cpu".
-
-    Returns
-    -------
-    TransactionEncoder
-        Trained encoder (without prediction head).
+    lambda_contrastive
+        Weight for NT-Xent loss (total = CE + lambda * NT-Xent).
+    nt_xent_temperature
+        Temperature for NT-Xent.
     """
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
     torch_device = torch.device(device)
 
-    # Load data
     if records is None:
         records = load_records()
 
-    # Split by participant
     train_records, val_records = split_by_participant(records, seed=seed)
 
-    # Build vocabulary and encoder
     vocab = TxVocabulary()
     vocab.save_vocab()
 
@@ -357,32 +376,27 @@ def train(
         gru_dropout=gru_dropout,
     ).to(torch_device)
 
-    # Prediction head (trained jointly, discarded after)
-    prediction_head = NextBrandTierHead(gru_hidden=gru_hidden).to(torch_device)
+    # Archetype classification head (trained jointly, discarded after)
+    archetype_head = nn.Linear(gru_hidden, N_ARCHETYPE_CLASSES).to(torch_device)
 
-    # Datasets and dataloaders
-    train_ds = TransactionSequenceDataset(train_records, vocab)
-    val_ds = TransactionSequenceDataset(val_records, vocab)
+    train_ds = SplitTransactionDataset(train_records, vocab)
+    val_ds = SplitTransactionDataset(val_records, vocab)
 
     train_loader = DataLoader(
-        train_ds,
-        batch_size=batch_size,
-        shuffle=True,
-        collate_fn=collate_fn,
+        train_ds, batch_size=batch_size, shuffle=True, collate_fn=collate_fn
     )
     val_loader = DataLoader(
-        val_ds,
-        batch_size=batch_size,
-        shuffle=False,
-        collate_fn=collate_fn,
+        val_ds, batch_size=batch_size, shuffle=False, collate_fn=collate_fn
     )
 
-    # Optimiser — joint params from encoder + prediction head + vocab embeddings
-    params = list(encoder.parameters()) + list(prediction_head.parameters())
-    optimiser = torch.optim.AdamW(params, lr=lr, weight_decay=weight_decay)
+    optimiser = torch.optim.AdamW(
+        list(encoder.parameters()) + list(archetype_head.parameters()),
+        lr=lr,
+        weight_decay=weight_decay,
+    )
+    ce_criterion = nn.CrossEntropyLoss()
 
-    # MLflow tracking
-    with mlflow.start_run(run_name="transaction_encoder_v1"):
+    with mlflow.start_run(run_name="transaction_encoder_v2_contrastive"):
         mlflow.set_tag("modality", "transaction")
         mlflow.log_params(
             {
@@ -396,38 +410,145 @@ def train(
                 "n_epochs": n_epochs,
                 "patience": patience,
                 "seed": seed,
+                "lambda_contrastive": lambda_contrastive,
+                "nt_xent_temperature": nt_xent_temperature,
+                "objective": "ce+nt_xent_split_history",
             }
         )
 
         best_val_loss = float("inf")
-        best_state = None
+        best_encoder_state: dict[str, torch.Tensor] | None = None
         patience_counter = 0
 
         for epoch in range(n_epochs):
-            train_loss = train_epoch(
-                encoder, prediction_head, train_loader, optimiser, torch_device
-            )
-            val_loss = eval_epoch(encoder, prediction_head, val_loader, torch_device)
+            encoder.train()
+            archetype_head.train()
+            epoch_ce = 0.0
+            epoch_nt = 0.0
+            n_batches = 0
 
-            mlflow.log_metric("train_loss", train_loss, step=epoch)
-            mlflow.log_metric("val_loss", val_loss, step=epoch)
+            for (
+                full_t,
+                full_l,
+                h1_t,
+                h1_l,
+                h2_t,
+                h2_l,
+                labels,
+                eligible,
+            ) in train_loader:
+                full_t = full_t.to(torch_device)
+                full_l = full_l.to(torch_device)
+                h1_t = h1_t.to(torch_device)
+                h1_l = h1_l.to(torch_device)
+                h2_t = h2_t.to(torch_device)
+                h2_l = h2_l.to(torch_device)
+                labels = labels.to(torch_device)
+
+                # Archetype CE: recompute via encoder internals to get the pre-projection
+                # gru_hidden-dim hidden state (archetype_head expects gru_hidden, not EMBEDDING_DIM).
+                projected_full = torch.relu(encoder.token_proj(full_t))
+                packed_full = pack_padded_sequence(
+                    projected_full, full_l.cpu(), batch_first=True, enforce_sorted=True
+                )
+                _, hidden_full = encoder.gru(packed_full)
+                gru_final_full = hidden_full[-1]  # (B, gru_hidden)
+                arch_logits = archetype_head(gru_final_full)
+                ce_loss = ce_criterion(arch_logits, labels)
+
+                # NT-Xent on split-history views (eligible participants only)
+                elig_mask = torch.tensor(eligible, device=torch_device)
+                nt_loss = torch.tensor(0.0, device=torch_device)
+                if elig_mask.sum() >= 2:
+                    h1_e = h1_t[elig_mask]
+                    h1_l_e = h1_l[elig_mask]
+                    h2_e = h2_t[elig_mask]
+                    h2_l_e = h2_l[elig_mask]
+
+                    # Sort each half by descending length for pack_padded_sequence
+                    o1 = torch.argsort(h1_l_e, descending=True)
+                    o2 = torch.argsort(h2_l_e, descending=True)
+
+                    emb_h1_sorted = _encode_sequence(encoder, h1_e[o1], h1_l_e[o1])
+                    emb_h2_sorted = _encode_sequence(encoder, h2_e[o2], h2_l_e[o2])
+
+                    # Re-align to original eligible order before NT-Xent
+                    inv1 = torch.argsort(o1)
+                    inv2 = torch.argsort(o2)
+                    emb_h1 = emb_h1_sorted[inv1]
+                    emb_h2 = emb_h2_sorted[inv2]
+
+                    nt_loss = nt_xent_views(emb_h1, emb_h2, nt_xent_temperature)
+
+                loss = ce_loss + lambda_contrastive * nt_loss
+
+                optimiser.zero_grad()
+                loss.backward()
+                optimiser.step()
+
+                epoch_ce += ce_loss.item()
+                epoch_nt += nt_loss.item()
+                n_batches += 1
+
+            avg_ce = epoch_ce / max(n_batches, 1)
+            avg_nt = epoch_nt / max(n_batches, 1)
+
+            # Validation: CE loss + accuracy on full-sequence archetype prediction
+            encoder.eval()
+            archetype_head.eval()
+            val_ce = 0.0
+            val_correct = 0
+            val_total = 0
+
+            with torch.no_grad():
+                for full_t, full_l, _, _, _, _, labels, _ in val_loader:
+                    full_t = full_t.to(torch_device)
+                    full_l = full_l.to(torch_device)
+                    labels = labels.to(torch_device)
+
+                    projected_full = torch.relu(encoder.token_proj(full_t))
+                    packed_full = pack_padded_sequence(
+                        projected_full,
+                        full_l.cpu(),
+                        batch_first=True,
+                        enforce_sorted=True,
+                    )
+                    _, hidden_full = encoder.gru(packed_full)
+                    gru_final = hidden_full[-1]
+                    arch_logits = archetype_head(gru_final)
+
+                    val_ce += ce_criterion(arch_logits, labels).item()
+                    val_correct += (arch_logits.argmax(dim=1) == labels).sum().item()
+                    val_total += labels.size(0)
+
+            avg_val_ce = val_ce / max(n_batches, 1)
+            val_acc = val_correct / max(val_total, 1)
+
+            mlflow.log_metrics(
+                {
+                    "train_ce_loss": avg_ce,
+                    "train_nt_loss": avg_nt,
+                    "val_ce_loss": avg_val_ce,
+                    "val_acc": val_acc,
+                },
+                step=epoch,
+            )
 
             logger.info(
-                "Epoch %d/%d  train_loss=%.4f  val_loss=%.4f",
+                "Epoch %d/%d  ce=%.4f  nt=%.4f  val_ce=%.4f  val_acc=%.4f",
                 epoch + 1,
                 n_epochs,
-                train_loss,
-                val_loss,
+                avg_ce,
+                avg_nt,
+                avg_val_ce,
+                val_acc,
             )
 
-            # Early stopping
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
+            if avg_val_ce < best_val_loss:
+                best_val_loss = avg_val_ce
                 patience_counter = 0
-                # Save best weights
-                best_state = {
-                    "encoder": encoder.state_dict(),
-                    "vocab": vocab.state_dict(),
+                best_encoder_state = {
+                    k: v.clone() for k, v in encoder.state_dict().items()
                 }
             else:
                 patience_counter += 1
@@ -435,19 +556,15 @@ def train(
                     logger.info("Early stopping at epoch %d", epoch + 1)
                     break
 
-        # Restore best weights
-        if best_state is not None:
-            encoder.load_state_dict(best_state["encoder"])
+        if best_encoder_state is not None:
+            encoder.load_state_dict(best_encoder_state)
 
         mlflow.log_metric("best_val_loss", best_val_loss)
-        mlflow.pytorch.log_model(encoder, "transaction_encoder")
 
-    # Save local checkpoint for probe evaluation
     _save_path = CHECKPOINT_PATHS["transaction"]
     _save_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(encoder.state_dict(), _save_path)
     logger.info("Checkpoint saved to %s", _save_path)
-
     logger.info("Training complete. Best val loss: %.4f", best_val_loss)
     return encoder
 

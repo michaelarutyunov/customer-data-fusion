@@ -10,11 +10,16 @@ Architecture:
 
 Only the projection layer is trained. Sentence-transformer weights are frozen
 and verified before every training run.
+
+Training objective: CE (archetype classification) + NT-Xent (individual identity).
+Two augmented views per sample are created by adding independent Gaussian noise
+(std=noise_std) to the pre-computed frozen sentence embeddings before the projection.
 """
 
 from __future__ import annotations
 
 import json
+from collections import defaultdict
 from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Optional
@@ -22,6 +27,7 @@ from typing import Optional
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from sentence_transformers import SentenceTransformer
 from torch.utils.data import DataLoader, TensorDataset
 
@@ -271,6 +277,85 @@ def embed_narratives(
     return result
 
 
+# ---------------------------------------------------------------------------
+# NT-Xent for augmented view pairs (SimCLR-style)
+# ---------------------------------------------------------------------------
+
+
+def nt_xent_views(
+    emb_v1: torch.Tensor,
+    emb_v2: torch.Tensor,
+    temperature: float = 0.07,
+) -> torch.Tensor:
+    """NT-Xent for a matched pair of augmented views.
+
+    emb_v1[i] and emb_v2[i] are the positive pair for sample i.
+    All other cross-sample pairs in the batch are negatives.
+    """
+    B = emb_v1.size(0)
+    if B < 2:
+        return torch.tensor(0.0, device=emb_v1.device, requires_grad=True)
+
+    embs = F.normalize(torch.cat([emb_v1, emb_v2], dim=0), dim=1)  # (2B, D)
+    sim = torch.mm(embs, embs.t()) / temperature  # (2B, 2B)
+
+    labels = torch.cat(
+        [
+            torch.arange(B, 2 * B, device=emb_v1.device),
+            torch.arange(0, B, device=emb_v1.device),
+        ]
+    )
+    mask = torch.eye(2 * B, dtype=torch.bool, device=emb_v1.device)
+    sim = sim.masked_fill(mask, float("-inf"))
+    return F.cross_entropy(sim, labels)
+
+
+def _compute_text_similarity_delta(
+    model: TextEncoder,
+    val_features: torch.Tensor,
+    val_records: list[PersonaNarrative],
+    noise_std: float,
+    n_samples: int = 300,
+) -> float:
+    """Same-participant view similarity minus same-archetype cross-participant baseline."""
+    model.eval()
+    by_persona: dict[str, list[int]] = defaultdict(list)
+    for i, r in enumerate(val_records):
+        by_persona[r.persona_id].append(i)
+
+    rng = torch.Generator()
+    rng.manual_seed(0)
+    same_sims: list[float] = []
+    cross_sims: list[float] = []
+
+    with torch.no_grad():
+        for idx in range(min(n_samples, len(val_records))):
+            feat = val_features[idx].unsqueeze(0)
+            n1 = torch.randn_like(feat, generator=rng) * noise_std
+            n2 = torch.randn_like(feat, generator=rng) * noise_std
+            e1 = F.normalize(model(feat + n1), dim=1)
+            e2 = F.normalize(model(feat + n2), dim=1)
+            same_sims.append((e1 * e2).sum().item())
+
+            pid = val_records[idx].persona_id
+            same_arch = [j for j in by_persona[pid] if j != idx]
+            if not same_arch:
+                continue
+            j = same_arch[torch.randint(len(same_arch), (1,), generator=rng).item()]  # type: ignore[arg-type]
+            feat_j = val_features[j].unsqueeze(0)
+            ej = F.normalize(model(feat_j), dim=1)
+            cross_sims.append((e1 * ej).sum().item())
+
+    if not same_sims or not cross_sims:
+        return 0.0
+    return float(np.mean(same_sims) - np.mean(cross_sims))
+
+
+# ---------------------------------------------------------------------------
+# Training
+# ---------------------------------------------------------------------------
+
+
 def train(
     narratives: Optional[list[PersonaNarrative]] = None,
     *,
@@ -282,12 +367,19 @@ def train(
     seed: int = 42,
     device: str = "cpu",
     log_mlflow: bool = True,
+    lambda_contrastive: float = 0.5,
+    nt_xent_temperature: float = 0.07,
+    noise_std: float = 0.01,
 ) -> TextEncoder:
-    """Train the text encoder projection layer.
+    """Train the text encoder projection layer with CE + NT-Xent multi-task objective.
 
     The sentence-transformer is fully frozen. Only the linear projection
-    (384 -> EMBEDDING_DIM) and classification head are trained via
-    persona classification (7-class cross-entropy).
+    (384 -> EMBEDDING_DIM) and classification head are trained.
+
+    Sentence embeddings are pre-computed once (frozen backbone). At each training
+    step, two augmented views are created by adding independent Gaussian noise
+    (std=noise_std) to the pre-computed embeddings before the projection head.
+    NT-Xent treats position-matched view pairs as positives (SimCLR-style).
 
     Parameters
     ----------
@@ -309,6 +401,14 @@ def train(
         ``"cpu"`` or ``"cuda"``.
     log_mlflow
         Whether to log the run to MLflow.
+    lambda_contrastive
+        Weight for NT-Xent loss (total = CE + lambda * NT-Xent).
+    nt_xent_temperature
+        Temperature for NT-Xent (default 0.07).
+    noise_std
+        Std of Gaussian noise added to sentence embeddings for augmentation.
+        all-MiniLM-L6-v2 outputs are unit-normalised so 0.01 ≈ 1% noise.
+        Increase to 0.05 if similarity_delta criterion is not met.
 
     Returns
     -------
@@ -328,7 +428,7 @@ def train(
         narratives, train_ratio=train_ratio, seed=seed
     )
 
-    # Pre-compute sentence embeddings (frozen, so only do this once)
+    # Pre-compute sentence embeddings (frozen backbone — do this once)
     train_features, train_labels = narratives_to_tensors(
         model, train_records, device=device
     )
@@ -342,39 +442,92 @@ def train(
     optimizer = torch.optim.AdamW(trainable_params, lr=lr, weight_decay=weight_decay)
     criterion = nn.CrossEntropyLoss()
 
-    def _evaluate(features: torch.Tensor, labels: torch.Tensor) -> float:
+    best_val_loss = float("inf")
+    best_trainable_state: dict[str, torch.Tensor] = {}
+    patience, patience_counter = 10, 0
+
+    def _evaluate() -> tuple[float, float]:
+        """Returns (val_loss, val_acc)."""
         model.eval()
         with torch.no_grad():
-            _, logits = model.forward_with_logits(features)
-            loss = criterion(logits, labels).item()
-        return loss
+            _, logits = model.forward_with_logits(val_features)
+            loss = criterion(logits, val_labels).item()
+            preds = logits.argmax(dim=1)
+            acc = (preds == val_labels).float().mean().item()
+        return loss, acc
 
     def _train_loop() -> None:
+        nonlocal best_val_loss, best_trainable_state, patience_counter
+
         for epoch in range(n_epochs):
             model.projection.train()
             model.classifier.train()
-            epoch_loss = 0.0
+            epoch_ce = 0.0
+            epoch_nt = 0.0
             n_batches = 0
+
             for batch_x, batch_y in train_loader:
+                batch_x = batch_x.to(device)
+                batch_y = batch_y.to(device)
+
+                # CE loss on original (noiseless) sentence embeddings
                 _, logits = model.forward_with_logits(batch_x)
-                loss = criterion(logits, batch_y)
+                ce_loss = criterion(logits, batch_y)
+
+                # NT-Xent: two Gaussian-noise views of the sentence embedding
+                noise1 = torch.randn_like(batch_x) * noise_std
+                noise2 = torch.randn_like(batch_x) * noise_std
+                emb_v1 = model(batch_x + noise1)
+                emb_v2 = model(batch_x + noise2)
+                nt_loss = nt_xent_views(emb_v1, emb_v2, nt_xent_temperature)
+
+                loss = ce_loss + lambda_contrastive * nt_loss
 
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
 
-                epoch_loss += loss.item()
+                epoch_ce += ce_loss.item()
+                epoch_nt += nt_loss.item()
                 n_batches += 1
 
-            avg_train_loss = epoch_loss / max(n_batches, 1)
-            val_loss = _evaluate(val_features, val_labels)
+            avg_ce = epoch_ce / max(n_batches, 1)
+            avg_nt = epoch_nt / max(n_batches, 1)
+            val_loss, val_acc = _evaluate()
 
             if log_mlflow:
-                mlflow.log_metric("train_loss", avg_train_loss, step=epoch)
-                mlflow.log_metric("val_loss", val_loss, step=epoch)
+                mlflow.log_metrics(
+                    {
+                        "train_ce_loss": avg_ce,
+                        "train_nt_loss": avg_nt,
+                        "val_loss": val_loss,
+                        "val_acc": val_acc,
+                    },
+                    step=epoch,
+                )
+
+            print(
+                f"Epoch {epoch + 1}/{n_epochs}  "
+                f"ce={avg_ce:.4f}  nt={avg_nt:.4f}  "
+                f"val_loss={val_loss:.4f}  val_acc={val_acc:.4f}"
+            )
+
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                patience_counter = 0
+                best_trainable_state = {
+                    name: param.clone()
+                    for name, param in model.state_dict().items()
+                    if not name.startswith("sentence_model.")
+                }
+            else:
+                patience_counter += 1
+                if patience_counter >= patience:
+                    print(f"Early stopping at epoch {epoch + 1}")
+                    break
 
     if log_mlflow:
-        with mlflow.start_run(run_name="text_encoder_v1"):
+        with mlflow.start_run(run_name="text_encoder_v2_contrastive"):
             mlflow.set_tag("modality", "text")
             mlflow.log_params(
                 {
@@ -385,23 +538,38 @@ def train(
                     "train_ratio": train_ratio,
                     "embedding_dim": EMBEDDING_DIM,
                     "sentence_model": SENTENCE_TRANSFORMER_MODEL,
+                    "lambda_contrastive": lambda_contrastive,
+                    "nt_xent_temperature": nt_xent_temperature,
+                    "noise_std": noise_std,
+                    "objective": "ce+nt_xent",
                 }
             )
             _train_loop()
-            final_val_loss = _evaluate(val_features, val_labels)
+            final_val_loss, final_val_acc = _evaluate()
             mlflow.log_metric("final_val_loss", final_val_loss)
+            mlflow.log_metric("final_val_acc", final_val_acc)
+
+            sim_delta = _compute_text_similarity_delta(
+                model, val_features, val_records, noise_std
+            )
+            mlflow.log_metric("similarity_delta_within_vs_cross_archetype", sim_delta)
+            print(f"Similarity delta: {sim_delta:.4f}")
+            print(f"Final val_acc: {final_val_acc:.4f}")
     else:
         _train_loop()
 
     # Save checkpoint (only trainable parameters, not frozen sentence-transformer)
     checkpoint_path = CHECKPOINT_PATHS["text"]
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-    trainable_state_dict = {
-        name: param
-        for name, param in model.state_dict().items()
-        if not name.startswith("sentence_model.")
-    }
-    torch.save(trainable_state_dict, checkpoint_path)
+    if best_trainable_state:
+        torch.save(best_trainable_state, checkpoint_path)
+    else:
+        trainable_state_dict = {
+            name: param
+            for name, param in model.state_dict().items()
+            if not name.startswith("sentence_model.")
+        }
+        torch.save(trainable_state_dict, checkpoint_path)
     print(f"Saved checkpoint to {checkpoint_path}")
 
     return model
