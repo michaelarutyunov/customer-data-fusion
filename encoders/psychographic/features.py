@@ -26,6 +26,7 @@ DECISION_STYLE_VOCAB: list[str] = [
     "dependent",
     "avoidant",
     "spontaneous",
+    "deliberate",
 ]
 
 AGE_BAND_ORDINAL: dict[str, float] = {
@@ -62,9 +63,10 @@ PURCHASE_FREQUENCY_ORDINAL: dict[str, float] = {
 # Median imputation value for years_buying_category (when None)
 YEARS_BUYING_MEDIAN: int = 5
 
-# Total feature dimension: 6 continuous + 5 decision_style + 1 age_band
-# + 4 household_type + 5 employment_status + 1 purchase_frequency = 22
-FEATURE_DIM: int = 22
+# Total feature dimension: 6 continuous + 6 decision_style + 1 age_band
+# + 5 employment_status + 1 purchase_frequency = 19
+# household_type excluded: it is deterministic per archetype (label leak).
+FEATURE_DIM: int = 19
 
 # Path where vocabularies are persisted
 VOCAB_PATH: Path = Path("data/synthetic/psych_vocab.json")
@@ -105,19 +107,16 @@ def to_feature_vector(
     *,
     years_buying_median: int = YEARS_BUYING_MEDIAN,
 ) -> torch.Tensor:
-    """Convert a PsychographicVector into a 22-dim float32 tensor.
+    """Convert a PsychographicVector into a 19-dim float32 tensor.
 
-    Feature layout (22 dims):
+    Feature layout (19 dims):
       [0:6]   -- continuous attitudinal scales (already 0-1)
-      [6:11]  -- decision_style_dominant one-hot (5)
-      [11]    -- age_band ordinal / 5.0
-      [12:16] -- household_type one-hot (4)
-      [16:21] -- employment_status one-hot (5)
-      [21]    -- purchase_frequency_band ordinal / 3.0
+      [6:12]  -- decision_style_dominant one-hot (6, incl. "deliberate")
+      [12]    -- age_band ordinal / 5.0
+      [13:18] -- employment_status one-hot (5)
+      [18]    -- purchase_frequency_band ordinal / 3.0
 
-    ``years_buying_category`` is not included in the standard 22-dim feature
-    vector per SPEC, but the *years_buying_median* parameter documents the
-    imputation rule (median=5) for downstream use.
+    household_type is excluded: it is deterministic per archetype (label leak).
     """
     # Continuous fields (6 dims)
     continuous = [
@@ -129,14 +128,11 @@ def to_feature_vector(
         psych.openness_to_new,
     ]
 
-    # decision_style_dominant one-hot (5 dims)
+    # decision_style_dominant one-hot (6 dims, incl. "deliberate")
     decision_style_oh = _one_hot(psych.decision_style_dominant, DECISION_STYLE_VOCAB)
 
     # age_band ordinal normalised (1 dim)
     age_ordinal = AGE_BAND_ORDINAL.get(psych.age_band, 3.0) / 5.0
-
-    # household_type one-hot (4 dims)
-    household_oh = _one_hot(psych.household_type, HOUSEHOLD_TYPE_VOCAB)
 
     # employment_status one-hot (5 dims)
     employment_oh = _one_hot(psych.employment_status, EMPLOYMENT_STATUS_VOCAB)
@@ -147,12 +143,7 @@ def to_feature_vector(
     )
 
     features = (
-        continuous
-        + decision_style_oh
-        + [age_ordinal]
-        + household_oh
-        + employment_oh
-        + [freq_ordinal]
+        continuous + decision_style_oh + [age_ordinal] + employment_oh + [freq_ordinal]
     )
     assert len(features) == FEATURE_DIM, (
         f"Feature vector has {len(features)} dims, expected {FEATURE_DIM}"
@@ -163,5 +154,5 @@ def to_feature_vector(
 def batch_to_feature_matrix(
     records: list[PsychographicVector],
 ) -> torch.Tensor:
-    """Convert a list of PsychographicVector into a (N, 22) tensor."""
+    """Convert a list of PsychographicVector into a (N, FEATURE_DIM) tensor."""
     return torch.stack([to_feature_vector(r) for r in records])

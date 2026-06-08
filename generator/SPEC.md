@@ -121,3 +121,17 @@ Expected output sizes:
 - `data/synthetic/narratives.jsonl`: 1,000 records
 
 Log progress via structlog at INFO every 100 participants.
+
+## Calibration Parameters
+
+Two env vars control individual-level variation spread. Both are read at module import time
+(changing them between calls in the same process has no effect).
+
+| Env var | Default | Effect |
+|---|---|---|
+| `GENERATOR_SPREAD` | `1.0` | Scales σ in `project()` calls for trace and transaction modalities, and scales additive z-effects in `trace_simulator.py`. Lower values narrow individual variation → stronger archetype signal. |
+| `PSYCHOGRAPHIC_SPREAD` | `1.0` | Scales σ in `project()` calls for psychographic features only. Higher values add individual noise to blur archetype-level separation. |
+
+**Calibrated values** (bead 92v, ADR 0001): `GENERATOR_SPREAD=0.2`, `PSYCHOGRAPHIC_SPREAD=4.0`
+with 150 participants per archetype. Achieves: trace ~62%, transaction ~64%, psychographic ~79%
+single-modality strategy recovery (PRD target: 65–80%).

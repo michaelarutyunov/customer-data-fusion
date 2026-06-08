@@ -2,7 +2,7 @@
 Psychographic encoder — MLP projector for fixed-width survey vectors.
 
 Architecture:
-    Input(22) -> Linear(22, 64) -> ReLU -> Dropout(0.2)
+    Input(19) -> Linear(19, 64) -> ReLU -> Dropout(0.2)
               -> Linear(64, EMBEDDING_DIM) -> ReLU
               -> LayerNorm(EMBEDDING_DIM)
 
@@ -21,7 +21,7 @@ from encoders.psychographic.features import FEATURE_DIM
 
 
 class PsychographicEncoder(nn.Module):
-    """MLP encoder that maps 22-dim psychographic feature vectors to
+    """MLP encoder that maps 19-dim psychographic feature vectors to
     ``EMBEDDING_DIM``-dimensional embeddings.
 
     The forward pass returns the embedding tensor. Use ``forward_with_logits``

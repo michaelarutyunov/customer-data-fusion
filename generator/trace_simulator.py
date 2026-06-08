@@ -18,6 +18,7 @@ from typing import Optional
 import numpy as np
 import structlog
 
+from generator.persona_sampler import GENERATOR_SPREAD
 from schemas.persona import (
     InspectionDepth,
     LatentDeviation,
@@ -70,8 +71,9 @@ def _dwell_mu_for(config: PersonaConfig) -> float:
     # Base mu from involvement_score (0->5.8, 1->7.5)
     involvement = config.psychographic.involvement_score
     mu_base = 5.8 + 1.7 * involvement
-    # thoroughness shifts mu up; impulsivity shifts it down
-    return float(mu_base + 0.4 * z.thoroughness - 0.3 * z.impulsivity)
+    # thoroughness shifts mu up; impulsivity shifts it down — scaled by GENERATOR_SPREAD
+    _s = GENERATOR_SPREAD
+    return float(mu_base + 0.4 * _s * z.thoroughness - 0.3 * _s * z.impulsivity)
 
 
 def _reduce_depth(depth: InspectionDepth) -> InspectionDepth:
@@ -304,8 +306,8 @@ def _generate_sequence(
     base_fraction = _DEPTH_FRACTION[depth]
     if time_pressure:
         base_fraction *= params.time_pressure_multiplier
-    # z.thoroughness widens or narrows the fraction jitter
-    thoroughness_factor = 0.0 if z is None else z.thoroughness
+    # z.thoroughness widens or narrows the fraction jitter — scaled by GENERATOR_SPREAD
+    thoroughness_factor = 0.0 if z is None else z.thoroughness * GENERATOR_SPREAD
     fraction = float(
         np.clip(
             base_fraction + rng.uniform(-0.04, 0.04) + 0.06 * thoroughness_factor,
@@ -391,8 +393,8 @@ def simulate_session(
         # Fatigue: trials 15+ -> shallower
         effective_depth = _reduce_depth(base_depth) if trial_idx >= 15 else base_depth
 
-        # Strategy lapse modulated by impulsivity
-        impulsivity_boost = 0.12 * max(0.0, z.impulsivity)
+        # Strategy lapse modulated by impulsivity — scaled by GENERATOR_SPREAD
+        impulsivity_boost = 0.12 * GENERATOR_SPREAD * max(0.0, z.impulsivity)
         effective_lapse_prob = float(
             np.clip(strategy_params.p_strategy_lapse + impulsivity_boost, 0.0, 0.8)
         )

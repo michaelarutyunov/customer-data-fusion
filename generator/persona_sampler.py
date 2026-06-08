@@ -40,6 +40,12 @@ _YAML_PATH = Path(__file__).parent.parent / "config" / "personas.yaml"
 # Per-participant noise scale (fraction of base value as std dev)
 _NOISE_SCALE = 0.15
 
+# Calibration parameters: scale sigma in project() calls per modality.
+# Reduce GENERATOR_SPREAD to increase archetype signal in trace/transaction.
+# Increase PSYCHOGRAPHIC_SPREAD to add individual noise in psychographic.
+GENERATOR_SPREAD: float = float(os.environ.get("GENERATOR_SPREAD", "1.0"))
+PSYCHOGRAPHIC_SPREAD: float = float(os.environ.get("PSYCHOGRAPHIC_SPREAD", "1.0"))
+
 
 @lru_cache(maxsize=1)
 def _load_yaml() -> dict:
@@ -183,9 +189,12 @@ def _build_transactions(
     total = sum(channel_mix_raw.values())
     channel_mix = {k: v / total for k, v in channel_mix_raw.items()}
 
+    _s = GENERATOR_SPREAD
     return TransactionParams(
-        price_sensitivity=project(z.price_lean, raw["price_sensitivity"], sigma=1.0),
-        brand_loyalty=project(z.brand_lean, raw["brand_loyalty"], sigma=1.0),
+        price_sensitivity=project(
+            z.price_lean, raw["price_sensitivity"], sigma=1.0 * _s
+        ),
+        brand_loyalty=project(z.brand_lean, raw["brand_loyalty"], sigma=1.0 * _s),
         purchase_frequency_per_month=_noisy(
             rng, raw["purchase_frequency_per_month"], lo=0.1, hi=30.0
         ),
@@ -200,12 +209,15 @@ def _build_transactions(
 def _build_psychographic(
     raw: dict, _rng: np.random.Generator, z: LatentDeviation
 ) -> PsychographicParams:
+    _s = PSYCHOGRAPHIC_SPREAD
     return PsychographicParams(
-        involvement_score=project(z.thoroughness, raw["involvement_score"], sigma=1.0),
-        maximiser_score=project(z.thoroughness, raw["maximiser_score"], sigma=1.0),
-        risk_tolerance=project(z.openness, raw["risk_tolerance"], sigma=0.8),
+        involvement_score=project(
+            z.thoroughness, raw["involvement_score"], sigma=1.0 * _s
+        ),
+        maximiser_score=project(z.thoroughness, raw["maximiser_score"], sigma=1.0 * _s),
+        risk_tolerance=project(z.openness, raw["risk_tolerance"], sigma=0.8 * _s),
         price_consciousness=PriceConsciousness(raw["price_consciousness"].lower()),
-        openness_to_new=project(z.openness, raw["openness_to_new"], sigma=1.0),
+        openness_to_new=project(z.openness, raw["openness_to_new"], sigma=1.0 * _s),
     )
 
 

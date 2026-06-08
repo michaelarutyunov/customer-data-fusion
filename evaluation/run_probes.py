@@ -9,11 +9,11 @@ Usage:
     PYTHONPATH=. uv run python -m evaluation.run_probes
     PYTHONPATH=. uv run python -m evaluation.run_probes --device cuda
 
-Expected thresholds (from szm.10–szm.13):
-    trace:         > 85% strategy recovery
-    transaction:   > 60% strategy recovery
-    text:          > 70% strategy recovery
-    psychographic: > 75% strategy recovery
+Expected thresholds (bead 92v — individual-level variation target):
+    trace:         65–80% strategy recovery (floor 65%)
+    transaction:   65–80% strategy recovery (floor 65%)
+    text:          65–80% strategy recovery (floor 65%)
+    psychographic: 65–80% strategy recovery (floor 65%)
 
 Exit code: 0 if all thresholds met, 1 otherwise or on error.
 """
@@ -418,7 +418,8 @@ def probe_psychographic(device: str = "cpu") -> dict:
     # Raw features baseline
     raw_result = probe_with_sklearn(raw_features, labels)
     logger.info(
-        "Raw features (22-dim) strategy recovery: %.2f%% ± %.2f%%",
+        "Raw features (%d-dim) strategy recovery: %.2f%% ± %.2f%%",
+        raw_features.shape[1],
         raw_result["mean_accuracy"] * 100,
         raw_result["std_accuracy"] * 100,
     )
@@ -498,21 +499,18 @@ def main(argv: list[str] | None = None) -> None:
             acc = result.get("mean_accuracy", 0)
             print(f"  {name:20s}: {acc:.2%} strategy recovery")
 
-    # Check pass thresholds
-    thresholds = {
-        "trace": 0.85,
-        "transaction": 0.60,
-        "text": 0.70,
-        "psychographic": 0.75,
-    }
+    # Check pass thresholds — floor 65%, ceiling 80% (individual-level variation target)
+    floor = 0.65
+    ceiling = 0.80
     all_pass = True
-    for name, threshold in thresholds.items():
+    for name in ["trace", "transaction", "text", "psychographic"]:
         if name in results and "error" not in results[name]:
             acc = results[name]["mean_accuracy"]
-            if acc >= threshold:
-                print(f"  ✓ {name}: {acc:.2%} ≥ {threshold:.0%}")
+            if floor <= acc <= ceiling:
+                print(f"  ✓ {name}: {acc:.2%} in [{floor:.0%}, {ceiling:.0%}]")
             else:
-                print(f"  ✗ {name}: {acc:.2%} < {threshold:.0%}")
+                tag = "below floor" if acc < floor else "above ceiling"
+                print(f"  ✗ {name}: {acc:.2%} ({tag})")
                 all_pass = False
 
     sys.exit(0 if all_pass else 1)

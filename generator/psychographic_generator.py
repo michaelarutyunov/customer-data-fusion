@@ -13,7 +13,7 @@ from __future__ import annotations
 import numpy as np
 import structlog
 
-from generator.persona_sampler import project
+from generator.persona_sampler import PSYCHOGRAPHIC_SPREAD, project
 from schemas.persona import PersonaConfig, PriceConsciousness
 from schemas.psychographic import PsychographicVector
 
@@ -99,7 +99,7 @@ def generate_psychographic(
     price_consciousness = project(
         z.price_lean,
         base=_PRICE_CONSCIOUSNESS_BASES[psych.price_consciousness],
-        sigma=0.8,
+        sigma=0.8 * PSYCHOGRAPHIC_SPREAD,
     )
 
     # brand_sensitivity: same z.brand_lean as transaction brand_loyalty

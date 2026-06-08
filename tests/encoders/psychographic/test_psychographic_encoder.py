@@ -22,7 +22,6 @@ from encoders.psychographic.features import (
     DECISION_STYLE_VOCAB,
     EMPLOYMENT_STATUS_VOCAB,
     FEATURE_DIM,
-    HOUSEHOLD_TYPE_VOCAB,
     PURCHASE_FREQUENCY_ORDINAL,
     YEARS_BUYING_MEDIAN,
     _one_hot,
@@ -88,16 +87,16 @@ def make_psych(
 class TestFeatureVector:
     """Tests for to_feature_vector output shape and content."""
 
-    def test_output_shape_is_22(self) -> None:
+    def test_output_shape_is_19(self) -> None:
         vec = to_feature_vector(make_psych())
-        assert vec.shape == (22,), f"Expected (22,), got {vec.shape}"
+        assert vec.shape == (19,), f"Expected (19,), got {vec.shape}"
 
     def test_output_dtype_is_float32(self) -> None:
         vec = to_feature_vector(make_psych())
         assert vec.dtype == torch.float32
 
     def test_feature_dim_constant_matches(self) -> None:
-        assert FEATURE_DIM == 22
+        assert FEATURE_DIM == 19
 
     def test_continuous_fields_preserved(self) -> None:
         psych = make_psych(
@@ -124,26 +123,17 @@ class TestOneHotEncoding:
     def test_decision_style_onehot(self) -> None:
         psych = make_psych(decision_style_dominant="intuitive")
         vec = to_feature_vector(psych)
-        # dims [6:11] = decision_style one-hot
-        oh = vec[6:11]
+        # dims [6:12] = decision_style one-hot (6 styles)
+        oh = vec[6:12]
         expected_idx = DECISION_STYLE_VOCAB.index("intuitive")
-        assert oh.sum().item() == pytest.approx(1.0)
-        assert oh[expected_idx].item() == pytest.approx(1.0)
-
-    def test_household_type_onehot(self) -> None:
-        psych = make_psych(household_type="couple")
-        vec = to_feature_vector(psych)
-        # dims [12:16] = household_type one-hot
-        oh = vec[12:16]
-        expected_idx = HOUSEHOLD_TYPE_VOCAB.index("couple")
         assert oh.sum().item() == pytest.approx(1.0)
         assert oh[expected_idx].item() == pytest.approx(1.0)
 
     def test_employment_status_onehot(self) -> None:
         psych = make_psych(employment_status="retired")
         vec = to_feature_vector(psych)
-        # dims [16:21] = employment_status one-hot
-        oh = vec[16:21]
+        # dims [13:18] = employment_status one-hot (household_type removed)
+        oh = vec[13:18]
         expected_idx = EMPLOYMENT_STATUS_VOCAB.index("retired")
         assert oh.sum().item() == pytest.approx(1.0)
         assert oh[expected_idx].item() == pytest.approx(1.0)
@@ -153,11 +143,8 @@ class TestOneHotEncoding:
         result = _one_hot("nonexistent", DECISION_STYLE_VOCAB)
         assert all(v == 0.0 for v in result)
 
-    def test_decision_style_vocab_has_5_classes(self) -> None:
-        assert len(DECISION_STYLE_VOCAB) == 5
-
-    def test_household_type_vocab_has_4_classes(self) -> None:
-        assert len(HOUSEHOLD_TYPE_VOCAB) == 4
+    def test_decision_style_vocab_has_6_classes(self) -> None:
+        assert len(DECISION_STYLE_VOCAB) == 6
 
     def test_employment_status_vocab_has_5_classes(self) -> None:
         assert len(EMPLOYMENT_STATUS_VOCAB) == 5
@@ -169,22 +156,22 @@ class TestOrdinalEncoding:
     def test_age_band_ordinal_normalised(self) -> None:
         psych = make_psych(age_band="45-54")
         vec = to_feature_vector(psych)
-        # dim [11] = age_band ordinal / 5.0
+        # dim [12] = age_band ordinal / 5.0 (after 6 continuous + 6 decision_style)
         expected = AGE_BAND_ORDINAL["45-54"] / 5.0
-        assert vec[11].item() == pytest.approx(expected)
+        assert vec[12].item() == pytest.approx(expected)
 
     def test_purchase_frequency_ordinal_normalised(self) -> None:
         psych = make_psych(purchase_frequency_band="weekly")
         vec = to_feature_vector(psych)
-        # dim [21] = purchase_frequency ordinal / 3.0
+        # dim [18] = purchase_frequency ordinal / 3.0
         expected = PURCHASE_FREQUENCY_ORDINAL["weekly"] / 3.0
-        assert vec[21].item() == pytest.approx(expected)
+        assert vec[18].item() == pytest.approx(expected)
 
     def test_age_band_unknown_gets_default(self) -> None:
         """Unknown age_band uses fallback value 3.0 / 5.0."""
         psych = make_psych(age_band="unknown_band")
         vec = to_feature_vector(psych)
-        assert vec[11].item() == pytest.approx(3.0 / 5.0)
+        assert vec[12].item() == pytest.approx(3.0 / 5.0)
 
 
 class TestYearsBuyingImputation:
@@ -197,7 +184,7 @@ class TestYearsBuyingImputation:
         """Records with years_buying_category=None should process without error."""
         psych = make_psych(years_buying_category=None)
         vec = to_feature_vector(psych)
-        assert vec.shape == (22,)
+        assert vec.shape == (19,)
 
 
 class TestBatchToFeatureMatrix:
@@ -206,7 +193,7 @@ class TestBatchToFeatureMatrix:
     def test_batch_shape(self) -> None:
         records = [make_psych(participant_id=f"p{i:03d}") for i in range(5)]
         matrix = batch_to_feature_matrix(records)
-        assert matrix.shape == (5, 22)
+        assert matrix.shape == (5, 19)
 
     def test_batch_dtype(self) -> None:
         records = [make_psych()]
