@@ -153,9 +153,6 @@ def train(
             loss = criterion(logits, labels).item()
         return loss
 
-    if log_mlflow:
-        mlflow.set_tag("modality", "psychographic")
-
     def _train_loop() -> None:
         for epoch in range(n_epochs):
             model.train()
