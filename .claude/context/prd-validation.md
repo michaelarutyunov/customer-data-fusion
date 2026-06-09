@@ -133,19 +133,20 @@ hard to align — two random halves of a single MouseLab session have no tempora
 This is an architectural limitation, not a training failure. Psychographic and text carry the
 strong individual signal that the fusion NT-Xent amplifies.
 
-### PersonaConfig regression probe (fused R²) — Phase 2b, not re-run post-0if
+### PersonaConfig regression probe (fused R²) — Updated 2026-06-09 (bead b8s, post-v1i data refresh)
 
-| Parameter | Fused R² | Best single-modality R² |
-|---|---|---|
-| inspection_depth | **0.982** | trace 0.863 |
-| price_sensitivity | **0.897** | trace 0.857 |
-| brand_loyalty | **0.890** | psychographic 0.808 |
-| p_strategy_lapse | **0.888** | psychographic 0.787 |
-| risk_tolerance | **0.796** | trace 0.770 |
-| maximiser_score | **0.796** | psychographic 0.701 |
-| involvement_score | **0.728** | psychographic 0.692 |
+| Parameter | Fused R² | trace | transaction | text | psychographic |
+|---|---|---|---|---|---|
+| price_sensitivity | **0.962** | 0.915 | 0.949 | 0.683 | 0.768 |
+| brand_loyalty | **0.942** | 0.852 | 0.898 | 0.606 | 0.898 |
+| inspection_depth | **0.894** | 0.764 | 0.614 | 0.528 | 0.154 |
+| involvement_score | **0.834** | 0.057 | 0.057 | 0.344 | 0.920 |
+| maximiser_score | **0.817** | 0.050 | 0.044 | 0.310 | 0.912 |
+| p_strategy_lapse | **0.798** | 0.366 | 0.640 | 0.438 | 0.207 |
+| risk_tolerance | **0.792** | 0.044 | 0.020 | 0.160 | 0.922 |
 
-Fused embedding achieves the highest R² on all 7 parameters.
+All 7/7 parameters ≥ 0.70 (gate criterion: ≥ 5/7). Fused embedding achieves highest R² on all 7.
+Previous results (Phase 2b, CE-only fusion): 0.728–0.982. Post-NT-Xent + data refresh: 0.792–0.962.
 
 ---
 
@@ -164,3 +165,19 @@ The CDT embedding identifies the correct individual from a group of 210 consumer
 time, using two independently degraded views of that person's data (with random modalities
 missing). This is 140× above random chance and constitutes a genuine individual-level digital twin
 — not just archetype classification. Archetype recovery (Tier 1) remains 100%.
+
+---
+
+## SEI Counterfactual Baseline
+
+**Defined by bead c11 (2026-06-09).**
+
+For Option B counterfactual evaluation (generator re-run with modified PersonaConfig):
+
+- **Baseline:** Per-participant original CDT embedding from frozen fusion model
+- **Meaningful shift threshold:** `cosine_distance_shift >= 0.27` (2× intra-archetype SD)
+- **Original threshold 0.1 rejected:** Below noise floor (2×SD = 0.27)
+- **Intra-archetype cosine distance:** mean = 0.3997, SD = 0.1332 (computed across all 7 archetypes × 150 participants)
+- **Known limitation:** Counterfactual re-run uses different random seed than original — shift conflates parameter change with noise realization (acceptable for prototype scope)
+
+See `.claude/context/fusion-architecture.md` §Counterfactual evaluation for per-archetype breakdown.

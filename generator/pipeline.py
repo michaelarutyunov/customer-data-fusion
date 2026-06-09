@@ -31,8 +31,7 @@ from pathlib import Path
 
 import structlog
 
-from schemas import PARTICIPANT_CONFIG_PATH
-from schemas.persona import InspectionDepth
+from schemas.persona import InspectionDepth, PersonaConfig
 from generator.persona_sampler import list_archetype_ids, sample_persona
 from generator.psychographic_generator import generate_psychographic
 from generator.text_generator import generate_narrative
@@ -43,6 +42,63 @@ from generator.validate import validate_participant
 log = structlog.get_logger(__name__)
 
 _OUTPUT_DIR = Path("data/synthetic")
+
+# ---------------------------------------------------------------------------
+# Counterfactual overrides — flat name → (parent_attr, child_attr) mapping
+# ---------------------------------------------------------------------------
+
+COUNTERFACTUAL_FIELDS: dict[str, tuple[str, str]] = {
+    "price_sensitivity": ("transactions", "price_sensitivity"),
+    "brand_loyalty": ("transactions", "brand_loyalty"),
+    "p_strategy_lapse": ("strategy", "p_strategy_lapse"),
+    "risk_tolerance": ("psychographic", "risk_tolerance"),
+    "maximiser_score": ("psychographic", "maximiser_score"),
+    "involvement_score": ("psychographic", "involvement_score"),
+    # inspection_depth is NOT overridable: it's an InspectionDepth enum, not a float.
+}
+
+
+def _apply_overrides(
+    config: PersonaConfig,
+    overrides: dict[str, float],
+) -> PersonaConfig:
+    """Apply counterfactual overrides to a frozen PersonaConfig.
+
+    Parameters
+    ----------
+    config : PersonaConfig
+        Original (frozen) persona configuration.
+    overrides : dict[str, float]
+        Flat field name → new float value.  Must be in COUNTERFACTUAL_FIELDS.
+
+    Returns
+    -------
+    PersonaConfig
+        New frozen PersonaConfig with overridden values.
+
+    Raises
+    ------
+    ValueError
+        If an unknown field name is supplied.
+    """
+    # Validate all keys first
+    for field_name in overrides:
+        if field_name not in COUNTERFACTUAL_FIELDS:
+            raise ValueError(f"Unknown PersonaConfig field: {field_name}")
+
+    # Group overrides by parent attribute to minimise replace() calls
+    grouped: dict[str, dict[str, float]] = {}
+    for field_name, new_value in overrides.items():
+        parent_attr, child_attr = COUNTERFACTUAL_FIELDS[field_name]
+        grouped.setdefault(parent_attr, {})[child_attr] = new_value
+
+    # Apply each group: replace nested object, then replace PersonaConfig
+    for parent_attr, child_overrides in grouped.items():
+        nested_obj = getattr(config, parent_attr)
+        new_nested = dataclasses.replace(nested_obj, **child_overrides)
+        config = dataclasses.replace(config, **{parent_attr: new_nested})
+
+    return config
 
 
 def _inspection_depth_to_float(depth: InspectionDepth) -> float:
@@ -77,6 +133,8 @@ def run_pipeline(
     output_dir: Path = _OUTPUT_DIR,
     skip_narratives: bool = False,
     n_per_archetype: int | None = None,
+    only_narratives: bool = False,
+    counterfactual_overrides: dict[str, dict[str, float]] | None = None,
 ) -> dict[str, int]:
     """
     Generate synthetic data for `n` participants.
@@ -102,6 +160,16 @@ def run_pipeline(
     n_per_archetype:
         If set, derives n = n_per_archetype * len(active_archetypes),
         overriding the `n` argument. Produces a balanced dataset.
+    only_narratives:
+        Generate only narratives.jsonl, leaving all other output files untouched.
+        Participant IDs are derived deterministically (same logic as a full run) so
+        they will match existing traces/transactions/psychographics produced with the
+        same --n / --n-per-archetype and --seed values.
+    counterfactual_overrides:
+        Optional dict mapping participant_id → {field_name: new_value}.  Applied
+        after PersonaConfig construction but before any modality generators.  Only
+        the 6 float fields in COUNTERFACTUAL_FIELDS are supported; raises ValueError
+        for unknown field names.  Participants not listed are unaffected.
 
     Returns
     -------
@@ -115,14 +183,19 @@ def run_pipeline(
     if n_per_archetype is not None:
         n = n_per_archetype * len(active_archetypes)
 
-    handles = {
-        "traces": open(output_dir / "traces.jsonl", "w"),
-        "trials": open(output_dir / "trials.jsonl", "w"),
-        "transactions": open(output_dir / "transactions.jsonl", "w"),
-        "psychographics": open(output_dir / "psychographics.jsonl", "w"),
-        "narratives": open(output_dir / "narratives.jsonl", "w"),
-        "participant_configs": open(PARTICIPANT_CONFIG_PATH, "w"),
-    }
+    if only_narratives:
+        handles = {
+            "narratives": open(output_dir / "narratives.jsonl", "w"),
+        }
+    else:
+        handles = {
+            "traces": open(output_dir / "traces.jsonl", "w"),
+            "trials": open(output_dir / "trials.jsonl", "w"),
+            "transactions": open(output_dir / "transactions.jsonl", "w"),
+            "psychographics": open(output_dir / "psychographics.jsonl", "w"),
+            "narratives": open(output_dir / "narratives.jsonl", "w"),
+            "participant_configs": open(output_dir / "participant_configs.jsonl", "w"),
+        }
     counts: dict[str, int] = {k: 0 for k in handles}
     counts["narrative_failures"] = 0
     n_validation_failures = 0
@@ -138,27 +211,42 @@ def run_pipeline(
 
             config = sample_persona(archetype_id, random_seed=seed)
 
-            events, trials = simulate_session(
-                config,
-                category=category,
-                n_trials=n_trials,
-                participant_id=participant_id,
-            )
-            transactions = simulate_transactions(
-                config,
-                category=category,
-                n_months=n_months,
-                participant_id=participant_id,
-            )
-            psychographic = generate_psychographic(
-                config,
-                category=category,
-                participant_id=participant_id,
-            )
+            if counterfactual_overrides and participant_id in counterfactual_overrides:
+                config = _apply_overrides(
+                    config, counterfactual_overrides[participant_id]
+                )
+                log.debug(
+                    "pipeline.counterfactual_override",
+                    participant_id=participant_id,
+                    overrides=counterfactual_overrides[participant_id],
+                )
 
-            if skip_narratives:
-                narrative = None
-            else:
+            events: list = []
+            trials: list = []
+            transactions: list = []
+            psychographic = None
+            narrative = None
+
+            if not only_narratives:
+                events, trials = simulate_session(
+                    config,
+                    category=category,
+                    n_trials=n_trials,
+                    participant_id=participant_id,
+                )
+                transactions = simulate_transactions(
+                    config,
+                    category=category,
+                    n_months=n_months,
+                    participant_id=participant_id,
+                )
+                psychographic = generate_psychographic(
+                    config,
+                    category=category,
+                    participant_id=participant_id,
+                )
+
+            if only_narratives or not skip_narratives:
                 try:
                     narrative = generate_narrative(
                         config,
@@ -176,7 +264,8 @@ def run_pipeline(
                     counts["narrative_failures"] += 1
                     narrative = None
 
-            if narrative is not None:
+            if narrative is not None and not only_narratives:
+                assert psychographic is not None
                 report = validate_participant(
                     config,
                     trials,
@@ -196,36 +285,39 @@ def run_pipeline(
                         checks=[f[0] for f in report.failures],
                     )
 
-            for event in events:
-                handles["traces"].write(_to_json(event) + "\n")
-                counts["traces"] += 1
+            if not only_narratives:
+                for event in events:
+                    handles["traces"].write(_to_json(event) + "\n")
+                    counts["traces"] += 1
 
-            for trial in trials:
-                handles["trials"].write(_to_json(trial) + "\n")
-                counts["trials"] += 1
+                for trial in trials:
+                    handles["trials"].write(_to_json(trial) + "\n")
+                    counts["trials"] += 1
 
-            for tx in transactions:
-                handles["transactions"].write(_to_json(tx) + "\n")
-                counts["transactions"] += 1
+                for tx in transactions:
+                    handles["transactions"].write(_to_json(tx) + "\n")
+                    counts["transactions"] += 1
 
-            handles["psychographics"].write(_to_json(psychographic) + "\n")
-            counts["psychographics"] += 1
+                handles["psychographics"].write(_to_json(psychographic) + "\n")
+                counts["psychographics"] += 1
 
-            # Write participant config continuous latent variables
-            participant_config = {
-                "participant_id": participant_id,
-                "price_sensitivity": config.transactions.price_sensitivity,
-                "brand_loyalty": config.transactions.brand_loyalty,
-                "inspection_depth": _inspection_depth_to_float(
-                    config.strategy.inspection_depth
-                ),
-                "maximiser_score": config.psychographic.maximiser_score,
-                "involvement_score": config.psychographic.involvement_score,
-                "risk_tolerance": config.psychographic.risk_tolerance,
-                "p_strategy_lapse": config.strategy.p_strategy_lapse,
-            }
-            handles["participant_configs"].write(json.dumps(participant_config) + "\n")
-            counts["participant_configs"] += 1
+                # Write participant config continuous latent variables
+                participant_config = {
+                    "participant_id": participant_id,
+                    "price_sensitivity": config.transactions.price_sensitivity,
+                    "brand_loyalty": config.transactions.brand_loyalty,
+                    "inspection_depth": _inspection_depth_to_float(
+                        config.strategy.inspection_depth
+                    ),
+                    "maximiser_score": config.psychographic.maximiser_score,
+                    "involvement_score": config.psychographic.involvement_score,
+                    "risk_tolerance": config.psychographic.risk_tolerance,
+                    "p_strategy_lapse": config.strategy.p_strategy_lapse,
+                }
+                handles["participant_configs"].write(
+                    json.dumps(participant_config) + "\n"
+                )
+                counts["participant_configs"] += 1
 
             if narrative is not None:
                 handles["narratives"].write(_to_json(narrative) + "\n")
@@ -288,6 +380,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Skip LLM narrative generation (for fast dry-runs)",
     )
     parser.add_argument(
+        "--only-narratives",
+        action="store_true",
+        help="Generate only narratives.jsonl; leaves traces/transactions/psychographics untouched",
+    )
+    parser.add_argument(
         "--n-per-archetype",
         type=int,
         default=None,
@@ -311,6 +408,7 @@ if __name__ == "__main__":
         output_dir=args.output_dir,
         skip_narratives=args.skip_narratives,
         n_per_archetype=args.n_per_archetype,
+        only_narratives=args.only_narratives,
     )
     for modality, count in counts.items():
         print(f"  {modality}: {count} rows")

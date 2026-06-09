@@ -115,3 +115,39 @@ Three Phase 2b evaluations probe the CDT embedding more broadly:
 3. **Within-persona UMAP** (`evaluation/geometry.py`): does colouring the UMAP by a continuous param show a gradient within archetype clusters?
 
 See `.claude/context/prd-validation.md` for quantitative results on all criteria.
+
+---
+
+## Counterfactual Evaluation Baseline
+
+**Defined by bead c11 (2026-06-09).**
+
+The baseline CDT embedding for each participant is computed from the **original** (pre-override) generator run using the frozen fusion model. Counterfactual shift is measured as cosine distance between this baseline and the re-generated embedding.
+
+### Threshold
+
+A counterfactual shift is considered **meaningful** if `cosine_distance_shift >= 0.27`.
+
+**Rationale:** Intra-archetype pairwise cosine distance across all 7 archetypes (150 participants each):
+
+| Metric | Value |
+|--------|-------|
+| Overall mean intra-archetype cosine distance | 0.3997 |
+| Overall SD | 0.1332 |
+| **Threshold (2×SD, rounded up)** | **0.27** |
+
+Per-archetype breakdown:
+
+| Archetype | n | Mean | SD |
+|-----------|---|------|-----|
+| price_lex | 150 | 0.3223 | 0.1020 |
+| quality_lex | 150 | 0.3526 | 0.1075 |
+| compensatory | 150 | 0.4266 | 0.1248 |
+| satisficer | 150 | 0.4730 | 0.1352 |
+| brand_affect | 150 | 0.3435 | 0.1091 |
+| adaptive | 150 | 0.4507 | 0.1389 |
+| low_involve | 150 | 0.4290 | 0.1278 |
+
+The original threshold of 0.1 was rejected — it is below the within-archetype noise floor (2×SD = 0.27). A shift of 0.1 would be indistinguishable from natural variation between two participants of the same archetype.
+
+**Note on seed confound:** Option B counterfactuals re-run the generator with `n=1`, producing a new participant ID (`{archetype}_0000`) with a different random seed than the original participant. The counterfactual embedding therefore reflects both the PersonaConfig override and a different noise realization. This is acceptable for the prototype — the test is whether the CDT embedding *responds* to parameter changes, not the precise magnitude of that response.
