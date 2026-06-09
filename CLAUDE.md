@@ -47,7 +47,7 @@ data/
 | `config/personas.yaml` | 7 persona archetype definitions — source of all synthetic data |
 | **Generator** | |
 | `generator/SPEC.md` | Generator module spec, output schemas, calibration targets |
-| `generator/pipeline.py` | Orchestrates all modalities per participant |
+| `generator/pipeline.py` | Orchestrates all modalities per participant; supports `counterfactual_overrides` |
 | `generator/validate.py` | Cross-modal consistency checks |
 | **Encoders** | |
 | `encoders/trace/SPEC.md` | Trace encoder spec — primary behavioural signal |
@@ -55,7 +55,10 @@ data/
 | `encoders/text/SPEC.md` | Text encoder spec — frozen sentence-transformer |
 | `encoders/psychographic/SPEC.md` | Psychographic encoder spec — MLP, supervised |
 | **Fusion** | |
-| `fusion/SPEC.md` | Fusion layer spec *(create before Phase 2b)* |
+| `fusion/SPEC.md` | Fusion layer spec — multi-task CE + NT-Xent |
+| **Evaluation** | |
+| `evaluation/counterfactual.py` | Option A counterfactual (archetype redistribution) |
+| `evaluation/counterfactual_option_b.py` | Option B counterfactual (generator re-run) |
 
 ---
 
@@ -91,6 +94,9 @@ uv run python -m evaluation.run_probes  # Validate all 4 encoder probes (run aft
 uv run mlflow ui                        # Launch experiment tracker
 bd ready                                # Check available tasks (Beads)
 ```
+
+> **Counterfactual simulation (Option B):** See `evaluation/counterfactual_option_b.py`.
+> Run: `uv run python -c "from evaluation.counterfactual_option_b import simulate_counterfactual; print(simulate_counterfactual('price_lex_0042', {'price_sensitivity': 0.99}))"`
 
 > **Warning — long-running output:** `generator.pipeline` and encoder train scripts emit many log lines.
 > Pipe through `| tail -50` when running interactively to avoid flooding terminal/context.
@@ -153,10 +159,10 @@ Every bead that dispatches parallel sub-agents must include an explicit **Merge 
 | `schemas/**` | `.claude/agents/schema-guardian/AGENT.md` |
 | `config/personas.yaml`, `generator/**` | `.claude/agents/generator-specialist/AGENT.md` |
 | `encoders/**` | `.claude/agents/encoder-specialist/AGENT.md` |
-| `fusion/**` | `.claude/agents/fusion-specialist/AGENT.md` *(placeholder)* |
-| `evaluation/**` | `.claude/agents/evaluation-specialist/AGENT.md` *(placeholder)* |
+| `fusion/**` | `.claude/agents/fusion-specialist/AGENT.md` |
+| `evaluation/**` | `.claude/agents/evaluation-specialist/AGENT.md` |
 
-> Agents not yet created are placeholders — create on first observed failure in that domain.
+> All agents are fully implemented with domain knowledge and anti-patterns.
 
 ---
 
@@ -173,6 +179,7 @@ Every bead that dispatches parallel sub-agents must include an explicit **Merge 
 | Phase 2a post-mortem | `.claude/context/phase2a-postmortem.md` |
 | Phase 2a fix post-mortem | `.claude/context/phase2a-fix-postmortem.md` |
 | Fusion architecture | `.claude/context/fusion-architecture.md` |
+| Generator diagnostics | `.claude/context/generator-diagnostics.md` |
 | Phase 2b post-mortem | `.claude/context/phase2b-postmortem.md` |
 | PRD validation | `.claude/context/prd-validation.md` |
 | Prototype summary | `.claude/context/prototype-summary.md` |
@@ -181,4 +188,4 @@ Every bead that dispatches parallel sub-agents must include an explicit **Merge 
 
 ## Current Phase
 
-**Prototype Complete.** Phase 2b (Fusion and Evaluation) is closed. All four modality encoders trained; late-fusion meta-learner achieves 100% strategy recovery (Tier 1 gate >85% passes). Tier 2 evaluation: cross-modal retrieval near-zero (CDT is archetype-level, not individual-level); PersonaConfig regression R² 0.73–0.98 (fused best on all 7 params). Counterfactual simulation (Option A) implemented; Option B (generator re-run) deferred to bead `sei`. See `.claude/context/phase2b-postmortem.md` for full findings and retrospective. See `.claude/context/prd-validation.md` for formal PRD criterion assessment (3 PASS, 1 PARTIAL).
+**Prototype Complete.** All phases closed. Four modality encoders trained with CE + NT-Xent multi-task objective (epic 3eg). Late-fusion meta-learner achieves 100% strategy recovery (Tier 1) and 70.4% dropout-view recall@1 (140× over chance — individual-level CDT, not just archetype classification). PersonaConfig regression R² 0.79–0.96 on all 7 parameters. Both counterfactual options implemented: Option A (archetype redistribution) and Option B (generator re-run via `counterfactual_overrides`, epic sei). PRD validation: 2 PASS, 2 PARTIAL. See `.claude/context/prd-validation.md` for formal criterion assessment and `.claude/context/prototype-summary.md` for stakeholder summary.

@@ -80,6 +80,10 @@ Cross-entropy loss. Sequence is shifted by 1: input = t₁...tₙ, target = t₂
 
 This is self-supervised — uses only the transaction sequence itself, no persona labels required.
 
+### Secondary: NT-Xent individual-identity objective (added epic 3eg)
+
+NT-Xent was added as a multi-task complement: `total_loss = CE_loss + lambda_contrastive * NT_Xent_loss`. The NT-Xent objective teaches the encoder that two augmented views of the same participant should produce similar embeddings. This improves individual-level identity in the downstream fusion embedding. Impact: val_acc shifts from CE-only ~64% to multi-task ~71% (relaxed thresholds are by design — see `.claude/context/prd-validation.md`).
+
 ### Why next brand_tier (not price)
 
 Price is already in the token as `price_paid_normalised`. Predicting brand_tier forces the GRU to learn switching behaviour and loyalty patterns — the signals most relevant to the twin's downstream tasks (response to new entrants, brand substitution).

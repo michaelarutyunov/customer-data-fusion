@@ -51,6 +51,10 @@ Linear projection output → linear head → 7-class softmax → cross-entropy l
 
 This is the only trained component. It learns to project the 384-dim semantic space into a 128-dim subspace that is discriminative for decision strategy.
 
+### NT-Xent individual-identity objective (added epic 3eg)
+
+NT-Xent was added as a multi-task complement: `total_loss = CE_loss + lambda_contrastive * NT_Xent_loss`. The NT-Xent objective teaches the encoder that two augmented views of the same participant (different text augmentations) should produce similar embeddings. Impact: val_acc shifts from CE-only ~100% to multi-task ~82% (relaxed thresholds are by design — see `.claude/context/prd-validation.md`).
+
 ## Training Configuration
 
 | Parameter | Value | Notes |

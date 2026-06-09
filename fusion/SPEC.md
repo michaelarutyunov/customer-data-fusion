@@ -86,13 +86,19 @@ Each column of the Bernoulli mask is drawn independently — different samples i
 
 ## Training Objective
 
-Supervised classification: 7 persona archetypes (same label set as individual encoder probes).
+Multi-task: CE classification + NT-Xent contrastive loss (bead 0if / epic 3eg).
 
 ```
-Loss = CrossEntropyLoss(logits, persona_idx)
+total_loss = CE_loss + lambda_contrastive * NT_Xent_loss
 ```
 
-Labels from `schemas.PERSONA_TO_IDX`. 80/20 train/val split using `split_participants(seed=42)` — the same function and seed used by all encoder probes. This guarantees the val set is identical across all probes and fusion, making single-encoder vs fused accuracy comparisons valid.
+**CE auxiliary head** — archetype separability (Tier 1 gate). `forward()` returns logits for CE loss.
+
+**NT-Xent contrastive loss** — teaches the meta-learner that two modality-dropout-augmented views of the same participant should map to nearby CDT embeddings. Positive pairs: two forward passes of the same participant with independent per-modality dropout (p=0.2). Other participants in the batch are negatives (SimCLR-style, temperature=0.07). This reuses the existing modality-dropout mechanism — no new data structure needed.
+
+**`lambda_contrastive=0.5`** (default). Produces roughly equal CE and NT-Xent gradient contributions at epoch 1.
+
+Labels from `schemas.PERSONA_TO_IDX`. 80/20 train/val split using `split_participants(seed=42)` — the same function and seed used by all encoder probes.
 
 Optimiser: Adam, lr=1e-3, weight_decay=1e-4. Scheduler: ReduceLROnPlateau (patience=5, factor=0.5). Early stopping: patience=10 epochs on val accuracy. Max epochs: 100.
 
@@ -112,7 +118,7 @@ Cache is invalidated if any encoder checkpoint is newer than the cache file (che
 
 ## Evaluation Metrics
 
-All metrics computed on the val split (201 participants) unless stated otherwise.
+All metrics computed on the val split (210 participants) unless stated otherwise.
 
 ### Archetype recovery (pass/fail gate)
 
@@ -124,23 +130,23 @@ All metrics computed on the val split (201 participants) unless stated otherwise
 
 **Ablation procedure**: for each modality, zero out its 128-dim slice of the 512-dim input and re-evaluate accuracy on the val split. Report the delta from the full-modality baseline. A delta < 5% is a finding worth investigating, not a failure — text and psychographic encoders both achieve 100% individual probe accuracy and may encode correlated information, making low deltas an expected and reportable result (see Phase 2a fix post-mortem R7). The only hard gate is overall strategy recovery >85%.
 
-Note: text and psychographic encoders are near-sufficient statistics for the latent `PersonaConfig` — 100% archetype accuracy from a single modality is expected and does not imply fusion has nothing to add. The three evaluations below probe what fusion adds beyond archetype recovery.
+Note: text and psychographic encoders are near-sufficient statistics for the latent `PersonaConfig` — 100% archetype accuracy from a single modality is expected and does not imply fusion has nothing to add. The evaluations below probe what fusion adds beyond archetype recovery.
 
 ### CDT embedding quality (diagnostic — no pass/fail gates)
 
-These evaluate whether the CDT embedding captures participant-level behavioural structure beyond the 7-class archetype label. All operate on the full dataset (1001 participants).
+These evaluate whether the CDT embedding captures participant-level behavioural structure beyond the 7-class archetype label. All operate on the full dataset (1050 participants, 150 per archetype).
 
 | Metric | Definition | Implementation |
 |---|---|---|
+| **Dropout-view CDT retrieval** | recall@1: given two random modality-dropout views of the same participant, does the correct participant rank #1 in the gallery? Primary individual-identity metric post-bead-0if. | Computed during fusion training |
 | CDT geometry | UMAP coloured by archetype (between-persona separation) + coloured by continuous PersonaConfig param within cluster (within-persona variation) | `evaluation/geometry.py` |
-| Cross-modal retrieval | recall@1 and recall@10: CDT embedding → each single-modality space (4 tests); single-modality → single-modality (6 pairs). Within-archetype recall@1 vs chance baseline (1/143) | `evaluation/retrieval.py` |
+| Cross-modal retrieval | recall@1 and recall@10: CDT embedding → each single-modality space (4 tests); single-modality → single-modality (6 pairs). **⚠️ NOT the right metric for individual identity** — CDT and encoder are different representation spaces never trained to align. Near-zero recall is expected. | `evaluation/retrieval.py` |
 | PersonaConfig regression | Ridge R² for each of 7 latent params × 5 embedding sets (fused + 4 individual). Tests whether fusion recovers continuous latent variables better than any single modality | `evaluation/config_probe.py` |
+| Counterfactual shift | Cosine distance between original and counterfactual CDT embeddings after generator re-run with modified PersonaConfig | `evaluation/counterfactual_option_b.py` |
 
-**Interpreting the geometry evaluation**: the within-persona UMAP view (coloured by a continuous param such as `price_sensitivity`) tests whether the CDT embedding preserves individual deviation from the archetype centre. If participants cluster by archetype but show no gradient within clusters, the embedding has collapsed within-persona variation — it is a persona classifier, not a participant-level twin. A visible gradient is evidence that the embedding encodes individual behavioural structure beyond the label.
+**Dropout-view retrieval** (post-bead-0if): the primary individual-identity diagnostic. Two modality-dropout augmented views of the same participant are embedded via the meta-learner, and cosine-similarity ranked against all val participants. Result: **70.4% recall@1** (210 participants, 140× over random chance of 0.005). This is the metric that validates the NT-Xent training objective.
 
-**Interpreting retrieval**: within-archetype recall@1 measures whether the CDT embedding identifies the same participant across modalities, not just the same archetype. Chance is ≈1/143. Recall significantly above chance is the primary evidence that fusion learns a shared participant-level representation.
-
-**Interpreting the regression probe**: a fused R² higher than all four individual modalities for a given parameter is the clearest evidence fusion is combining complementary information. For parameters like `inspection_depth` (strongly encoded in traces) or `price_sensitivity` (strongly encoded in transactions), single-modality probes will score high — fusion should match or exceed them. For parameters that no single modality encodes well, fusion may add most.
+**Counterfactual evaluation** (post-epic-sei): `simulate_counterfactual()` re-runs the generator with modified PersonaConfig fields, re-encodes through frozen encoders, and measures CDT cosine distance shift. A meaningful shift is >= 0.27 (2× intra-archetype SD, from bead c11). See `.claude/context/fusion-architecture.md` §Counterfactual evaluation for baseline details.
 
 These three evaluations together determine whether the prototype supports the strong CDT claim or only the weaker archetype-recovery claim — see `.claude/context/project-vision.md`.
 
@@ -155,16 +161,18 @@ fusion/
   train.py            # fusion training + embedding cache generation
 
 evaluation/
-  strategy_recovery.py  # archetype classification accuracy + comparison table
-  ablation.py           # leave-one-out modality ablation (4 tests)
-  geometry.py           # UMAP projection + within-persona colouring
-  retrieval.py          # cross-modal nearest-neighbour retrieval
-  config_probe.py       # Ridge regression probes for PersonaConfig params
+  strategy_recovery.py      # archetype classification accuracy + comparison table
+  ablation.py               # leave-one-out modality ablation (4 tests)
+  geometry.py               # UMAP projection + within-persona colouring
+  retrieval.py              # cross-modal nearest-neighbour retrieval
+  config_probe.py           # Ridge regression probes for PersonaConfig params
+  counterfactual.py         # Option A: archetype redistribution rules
+  counterfactual_option_b.py # Option B: generator re-run with modified PersonaConfig
 
 data/synthetic/
   participant_configs.jsonl  # PersonaConfig float params per participant
-                             # written by generator/pipeline.py (bead c33)
-                             # required by geometry.py and config_probe.py
+                             # written by generator/pipeline.py to output_dir
+                             # required by geometry.py, config_probe.py, counterfactual_option_b.py
 ```
 
 ### `meta_learner.py` interface
@@ -209,7 +217,7 @@ Checkpoint saved to `models/fusion_meta_learner.pt` (state dict of meta-learner 
 ## Constraints
 
 - Encoders are **always frozen** during fusion training. No joint fine-tuning in v0.1.
-- The fusion layer trains only on persona classification. No unsupervised objective.
+- The fusion layer trains on multi-task objective: CE classification + NT-Xent contrastive. The NT-Xent is what enables individual-level CDT identity.
 - CDT embedding dimension is fixed at **128** — matches individual encoder output dim, enabling direct comparison between single-encoder and fused embeddings in evaluation.
 - `fusion/` imports encoder model classes (e.g. `from encoders.trace.model import TraceEncoder`) to reconstruct architectures for checkpoint loading, but never couples to encoder training logic. The prohibition in CLAUDE.md is generator↔encoders, not fusion→encoders.
 - `fusion/` imports from `schemas/` for CHECKPOINT_PATHS, PERSONA_TO_IDX, and EMBEDDING_DIM. No circular imports.

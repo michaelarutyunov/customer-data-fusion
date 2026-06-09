@@ -133,5 +133,25 @@ Two env vars control individual-level variation spread. Both are read at module 
 | `PSYCHOGRAPHIC_SPREAD` | `1.0` | Scales σ in `project()` calls for psychographic features only. Higher values add individual noise to blur archetype-level separation. |
 
 **Calibrated values** (bead 92v, ADR 0001): `GENERATOR_SPREAD=0.2`, `PSYCHOGRAPHIC_SPREAD=4.0`
-with 150 participants per archetype. Achieves: trace ~62%, transaction ~64%, psychographic ~79%
-single-modality strategy recovery (PRD target: 65–80%).
+with 150 participants per archetype (1050 total). Achieves: trace ~56%, transaction ~71%, psychographic ~62%
+single-modality strategy recovery (post-multi-task, PRD target: 65–80%).
+
+## Counterfactual Overrides
+
+`run_pipeline()` accepts an optional `counterfactual_overrides` parameter for Option B counterfactual evaluation (epic sei):
+
+```python
+counterfactual_overrides: dict[str, dict[str, float]] | None = None
+# Maps participant_id → {flat_field_name: new_value}
+```
+
+**Mechanism:** After `sample_persona()` constructs the `PersonaConfig` for a participant, if that `participant_id` appears in the overrides dict, `_apply_overrides()` uses `dataclasses.replace()` to create a new frozen `PersonaConfig` with the overridden fields. All modality generators then receive the modified config.
+
+**Supported fields** (defined in `COUNTERFACTUAL_FIELDS` constant):
+- `price_sensitivity`, `brand_loyalty` → `config.transactions`
+- `p_strategy_lapse` → `config.strategy`
+- `risk_tolerance`, `maximiser_score`, `involvement_score` → `config.psychographic`
+
+**Not supported:** `inspection_depth` is an `InspectionDepth` enum, not a float. Raises `ValueError` if specified.
+
+**Output path:** `participant_configs.jsonl` writes to `output_dir` (same as all other output files), not to a hardcoded canonical path. This allows counterfactual runs to temp directories without corrupting the main dataset.

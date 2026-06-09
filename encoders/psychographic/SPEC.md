@@ -72,6 +72,10 @@ e_psychographic → Linear(128 → 7) → softmax → cross-entropy
 
 Uses `persona_id` as ground truth label (7 classes). This is the only encoder that is fully supervised from the start — psychographic vectors are designed to correlate with strategy, so supervision is appropriate.
 
+### NT-Xent individual-identity objective (added epic 3eg)
+
+NT-Xent was added as a multi-task complement: `total_loss = CE_loss + lambda_contrastive * NT_Xent_loss`. The NT-Xent objective teaches the encoder that two augmented views of the same participant should produce similar embeddings. Impact: val_acc shifts from CE-only ~79% to multi-task ~62% (relaxed thresholds are by design — see `.claude/context/prd-validation.md`).
+
 ## Training Configuration
 
 | Parameter | Value | Notes |

@@ -75,6 +75,12 @@ A linear classification head is added on top of the CLS embedding for training. 
 
 **Why not contrastive (NT-Xent)?** NT-Xent was evaluated first (Phase 2a) and produced 35.57% strategy recovery regardless of participant count. The root cause is that NT-Xent optimises cluster *geometry* (same-class embeddings close, different-class far), while the downstream logistic regression probe requires *linear separability*. With only 7 classes and stochastic strategy simulation, NT-Xent cannot learn the required structure. Supervised cross-entropy directly optimises linear separability and achieves 95%+ strategy recovery on the same data. See `.claude/context/phase2a-fix-postmortem.md` for the full diagnosis.
 
+### Secondary: NT-Xent individual-identity objective (added epic 3eg)
+
+NT-Xent was later added as a **multi-task complement** (not replacement) to CE. The encoder now trains on `total_loss = CE_loss + lambda_contrastive * NT_Xent_loss`. The NT-Xent objective teaches the encoder that two augmented views of the same participant (different trial subsets) should produce similar embeddings. This improves individual-level identity in the downstream fusion embedding.
+
+**Impact on accuracy:** The multi-task trade-off relaxes CE accuracy (trace: 95% → 56.3%) but enables individual-level CDT identity (fusion dropout-view recall@1 = 70.4%). The relaxed thresholds are by design — see `.claude/context/prd-validation.md`.
+
 ## Training Configuration
 
 | Parameter | Value | Notes |
