@@ -1,8 +1,15 @@
 # New Capabilities — Post-Prototype Enhancement Roadmap
 
-> Version: 0.5
+> Version: 0.6
 > Status: Proposals. None committed.
 > Audience: Coding agents creating implementation epics; technical reviewers.
+>
+> **v0.6 changes (module governance):** Pinned the home for CDT-consumer capabilities —
+> a new top-level `applications/` package (mirroring `encoders/`), with a boundary
+> invariant, the CDT-embedding cache contract (`applications/_cache/cdt_embeddings.parquet`),
+> and the Phase-2 prerequisite to create an `applications-specialist` agent + CLAUDE.md
+> trigger row. Resolves the "where do M1/L2/M2/L1 heads live, and which agent owns them"
+> gap (§ Module placement).
 >
 > **v0.5 changes (bead-readiness):** Added the **Phase 0 Generator SPEC** (§ pinning the
 > attribute encoding, per-strategy utility equations, softmax/gain/lapse constants,
@@ -39,6 +46,53 @@ Any capability that predicts, ranks, or simulates choices among products require
 **Encoders and fusion training logic remain frozen.** The four modality encoders and the fusion meta-learner are trained infrastructure. No capability modifies their architecture, training scripts, or saved weights. All additions consume the frozen `EMBEDDING_DIM=128` CDT embedding.
 
 **Schema and generator changes are permitted** when required by a capability. These are additive and backward-compatible where possible. When schema changes invalidate existing synthetic data, the dataset must be regenerated and encoders revalidated (but not retrained unless the input distribution changes materially).
+
+### Module placement (CDT-consumer capabilities)
+
+Capabilities that **consume** the frozen CDT but are not schemas/generator/encoders/fusion
+live in a new top-level **`applications/`** package, mirroring the `encoders/` layout — one
+subdirectory per capability, each with its own `SPEC.md`:
+
+```
+applications/
+  choice/      # M1 — choice prediction head (two-tower)
+  ranking/     # L2 — thin wrapper over choice/
+  market/      # M2 — aggregates choice/ over MarketState
+  churn/       # L1 — churn head + RFM baseline
+  temporal/    # H1 — sequential CDT (when built)
+  _cache/      # cached CDT embeddings (see M1 data requirements)
+```
+
+**Boundary invariant.** `applications/` modules import the frozen fusion meta-learner and
+`EMBEDDING_DIM` from `schemas/`, and may import `Product`/`ChoiceSet`/`MarketState`. They
+**never** import or modify encoder/fusion *training* code, and they read CDT embeddings from
+the cache rather than recomputing them inline. Each ships its own trained head under its
+subdir.
+
+- **Why not `fusion/`** — fusion *produces* the CDT (it is the meta-learner); heads *consume*
+  it. Co-locating would blur the "late fusion produces one embedding" boundary and risks
+  coupling head training into fusion training, which the Invariant forbids.
+- **Why not `evaluation/`** — evaluation *measures* the CDT (L3 stability, probes, geometry)
+  and stays there. Applications are trained models with their own weights and inference paths.
+  Dividing line: **L1 churn is an application** (ships a head); **L3 stability is evaluation**
+  (ships a metric).
+
+**CDT embedding cache contract** (resolves the open M1 dependency). A one-shot script writes
+frozen embeddings to `applications/_cache/cdt_embeddings.parquet`, keyed by
+`(participant_id, session_id)` with a 128-float `cdt` column. M1/L2/M2 read this cache; they
+do not call the fusion model inline. Regeneration of the dataset invalidates the cache —
+rebuild it after Phase 0 step 12.
+
+**Phase 2 prerequisite (governance).** Before M1 begins, create the Tier-2 agent
+`.claude/agents/applications-specialist/AGENT.md` and add the CLAUDE.md Agent Trigger Table row:
+
+```
+| applications/** | .claude/agents/applications-specialist/AGENT.md |
+```
+
+Agent remit: CDT-consumer head/training/inference code. Anti-patterns to encode: recomputing
+embeddings instead of reading `_cache/`; importing encoder/fusion train modules; splitting
+train/test at the trial level instead of the participant level (§ M1 train/test split).
 
 > **Retraining trigger (made concrete).** "Input distribution changes materially" is
 > not left to judgement. Coupling the choice model to the trace (see § Generator Impact)
@@ -419,7 +473,7 @@ Where `D` is the number of concrete product attributes from the Product schema.
 - Requires `ChoiceSet` schema (new).
 - Requires generator rewrite to produce preference-driven choices and persist attribute values.
 - Requires data regeneration — existing synthetic data has random choices and no attribute values.
-- Derived dataset: flat table of `(participant_id, cdt_embedding, product_features_vector, chosen_bool)` rows built from ChoiceSet + cached CDT embeddings.
+- Derived dataset: flat table of `(participant_id, cdt_embedding, product_features_vector, chosen_bool)` rows built from `ChoiceSet` (join `alternative_products[slot]` → `products.jsonl` for features) + CDT embeddings read from `applications/_cache/cdt_embeddings.parquet` (§ Module placement). Lives under `applications/choice/`.
 
 **Success criteria:**
 - **CDT contribution (the gating criterion).** AUC must beat a *no-CDT baseline* — the same two-tower head with the CDT tower replaced by (a) product-features-only and (b) a persona-id one-hot — by **≥ 0.05 AUC**. This mirrors L1's RFM-baseline discipline and is the real test: it proves the *decision process* (trace-dominated CDT) predicts the choice, rather than the choice being recoverable from product features or persona identity alone. An absolute AUC that does not clear this lift is a **fail**, because it means the CDT added nothing — a likely symptom of trace–choice decoupling (§ Generator Impact). Without the coupling fix, this gate is unpassable, which is exactly the point.
