@@ -82,7 +82,17 @@
       "Edit(tests/**)",
       "Edit(generator/**)",
       "Edit(config/**)",
-      "Edit(schemas/**)"
+      "Edit(schemas/**)",
+      "Edit(evaluation/**)",
+      "Edit(fusion/**)",
+      "Write(docs/**)",
+      "Bash(rg:*)",
+      "Bash(fd:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(wc:*)",
+      "Bash(sed:*)",
+      "Bash(grep:*)"
     ],
     "deny": [
       "Bash(curl:*)",
