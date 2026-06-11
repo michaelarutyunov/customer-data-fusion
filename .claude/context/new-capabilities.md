@@ -83,16 +83,13 @@ frozen embeddings to `applications/_cache/cdt_embeddings.parquet`, keyed by
 do not call the fusion model inline. Regeneration of the dataset invalidates the cache —
 rebuild it after Phase 0 step 12.
 
-**Phase 2 prerequisite (governance).** Before M1 begins, create the Tier-2 agent
-`.claude/agents/applications-specialist/AGENT.md` and add the CLAUDE.md Agent Trigger Table row:
-
-```
-| applications/** | .claude/agents/applications-specialist/AGENT.md |
-```
-
-Agent remit: CDT-consumer head/training/inference code. Anti-patterns to encode: recomputing
-embeddings instead of reading `_cache/`; importing encoder/fusion train modules; splitting
-train/test at the trial level instead of the participant level (§ M1 train/test split).
+**Phase 2 governance (in place).** The Tier-2 agent
+`.claude/agents/applications-specialist/AGENT.md` exists and the CLAUDE.md Agent Trigger Table
+routes `applications/**` to it. The agent encodes the boundary invariant and the anti-patterns
+(recomputing embeddings instead of reading `_cache/`; importing encoder/fusion train modules;
+trial-level instead of participant-level splits; reporting absolute AUC instead of no-CDT lift;
+validating M2 on baseline only). The `applications/` directory itself is created lazily by the
+first Phase-2 bead (M1).
 
 > **Retraining trigger (made concrete).** "Input distribution changes materially" is
 > not left to judgement. Coupling the choice model to the trace (see § Generator Impact)

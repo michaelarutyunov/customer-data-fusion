@@ -161,6 +161,7 @@ Every bead that dispatches parallel sub-agents must include an explicit **Merge 
 | `encoders/**` | `.claude/agents/encoder-specialist/AGENT.md` |
 | `fusion/**` | `.claude/agents/fusion-specialist/AGENT.md` |
 | `evaluation/**` | `.claude/agents/evaluation-specialist/AGENT.md` |
+| `applications/**` | `.claude/agents/applications-specialist/AGENT.md` |
 
 > All agents are fully implemented with domain knowledge and anti-patterns.
 
@@ -175,14 +176,15 @@ Every bead that dispatches parallel sub-agents must include an explicit **Merge 
 | Governance principles | `.claude/context/codified-context-principles.md` |
 | Persona archetypes | `.claude/context/persona-archetypes.md` |
 | Data contracts | `.claude/context/data-contracts.md` |
-| Phase 1 post-mortem | `.claude/context/phase1-postmortem.md` |
-| Phase 2a post-mortem | `.claude/context/phase2a-postmortem.md` |
-| Phase 2a fix post-mortem | `.claude/context/phase2a-fix-postmortem.md` |
+| Phase 1 post-mortem | `docs/post-mortems/phase1-postmortem.md` |
+| Phase 2a post-mortem | `docs/post-mortems/phase2a-postmortem.md` |
+| Phase 2a fix post-mortem | `docs/post-mortems/phase2a-fix-postmortem.md` |
 | Fusion architecture | `.claude/context/fusion-architecture.md` |
 | Generator diagnostics | `.claude/context/generator-diagnostics.md` |
-| Phase 2b post-mortem | `.claude/context/phase2b-postmortem.md` |
+| Phase 2b post-mortem | `docs/post-mortems/phase2b-postmortem.md` |
 | PRD validation | `.claude/context/prd-validation.md` |
 | Prototype summary | `.claude/context/prototype-summary.md` |
+| Post-prototype capabilities | `.claude/context/new-capabilities.md` |
 
 ---
 
