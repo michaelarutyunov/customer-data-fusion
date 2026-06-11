@@ -1,4 +1,5 @@
 """Create notebooks/03_fusion_validation.ipynb"""
+
 import json
 from pathlib import Path
 
@@ -6,7 +7,11 @@ nb = {
     "nbformat": 4,
     "nbformat_minor": 5,
     "metadata": {
-        "kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"},
+        "kernelspec": {
+            "display_name": "Python 3",
+            "language": "python",
+            "name": "python3",
+        },
         "language_info": {"name": "python", "version": "3.14.0"},
     },
     "cells": [],
@@ -40,22 +45,22 @@ cells = [
         "6. **Text encoder diagnostic** — intra-archetype cosine similarity"
     ),
     code(
-        'import sys, warnings\n'
+        "import sys, warnings\n"
         'sys.path.insert(0, ".")\n'
         'warnings.filterwarnings("ignore")\n'
         'import os; os.environ["MLFLOW_ALLOW_FILE_STORE"] = "1"\n'
-        '\n'
-        'import json\n'
-        'import numpy as np\n'
-        'import torch\n'
-        'import torch.nn.functional as F\n'
-        'import matplotlib.pyplot as plt\n'
-        'import seaborn as sns\n'
-        'from pathlib import Path\n'
-        '\n'
-        'from schemas import PERSONA_LABELS, CHECKPOINT_PATHS\n'
-        'from fusion.meta_learner import LateFusionMetaLearner\n'
-        '\n'
+        "\n"
+        "import json\n"
+        "import numpy as np\n"
+        "import torch\n"
+        "import torch.nn.functional as F\n"
+        "import matplotlib.pyplot as plt\n"
+        "import seaborn as sns\n"
+        "from pathlib import Path\n"
+        "\n"
+        "from schemas import PERSONA_LABELS, CHECKPOINT_PATHS\n"
+        "from fusion.meta_learner import LateFusionMetaLearner\n"
+        "\n"
         'cache = torch.load("models/fusion_embeddings_cache.pt", weights_only=False)\n'
         'labels = cache["labels"].numpy()\n'
         'MODALITIES = ["trace", "transaction", "text", "psychographic"]\n'
@@ -69,9 +74,9 @@ cells = [
         "classifiers cannot improve beyond 100%."
     ),
     code(
-        'from evaluation.strategy_recovery import run_strategy_recovery, format_results\n'
-        'results = run_strategy_recovery()\n'
-        'print(format_results(results))'
+        "from evaluation.strategy_recovery import run_strategy_recovery, format_results\n"
+        "results = run_strategy_recovery()\n"
+        "print(format_results(results))"
     ),
     code(
         'BASELINES = {"trace": 0.9502, "transaction": 0.6259, "text": 1.0, "psychographic": 1.0}\n'
@@ -79,20 +84,20 @@ cells = [
         'accs = [BASELINES["trace"], BASELINES["transaction"], BASELINES["text"],\n'
         '        BASELINES["psychographic"], results["val_accuracy"]]\n'
         'colors = ["#4C72B0","#4C72B0","#4C72B0","#4C72B0","#DD8452"]\n'
-        '\n'
-        'fig, ax = plt.subplots(figsize=(8, 4))\n'
+        "\n"
+        "fig, ax = plt.subplots(figsize=(8, 4))\n"
         'bars = ax.bar(modalities, accs, color=colors, edgecolor="white", linewidth=0.5)\n'
         'ax.axhline(0.85, color="red", linestyle="--", linewidth=1.5, label="85% gate")\n'
-        'ax.set_ylim(0, 1.10)\n'
+        "ax.set_ylim(0, 1.10)\n"
         'ax.set_ylabel("Val accuracy")\n'
         'ax.set_title("Strategy Recovery: Single-modality vs Fused")\n'
-        'ax.legend()\n'
-        'for bar, acc in zip(bars, accs):\n'
-        '    ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,\n'
+        "ax.legend()\n"
+        "for bar, acc in zip(bars, accs):\n"
+        "    ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,\n"
         '            f"{acc:.0%}", ha="center", va="bottom", fontsize=10)\n'
-        'plt.tight_layout()\n'
+        "plt.tight_layout()\n"
         'plt.savefig("notebooks/strategy_recovery.png", dpi=150)\n'
-        'plt.show()'
+        "plt.show()"
     ),
     md(
         "## 2. Ablation — Leave-one-out Modality Importance\n\n"
@@ -103,30 +108,30 @@ cells = [
         "signal the model cannot reconstruct from the other three."
     ),
     code(
-        'from evaluation.ablation import run_ablation, format_results as ablation_fmt\n'
-        'ablation = run_ablation()\n'
-        'print(ablation_fmt(ablation))'
+        "from evaluation.ablation import run_ablation, format_results as ablation_fmt\n"
+        "ablation = run_ablation()\n"
+        "print(ablation_fmt(ablation))"
     ),
     code(
-        'deltas = {\n'
+        "deltas = {\n"
         '    m: ablation["baseline_accuracy"] - ablation["ablation_results"][m]["val_accuracy"]\n'
-        '    for m in MODALITIES\n'
-        '}\n'
-        'sorted_mods = sorted(deltas, key=lambda m: -deltas[m])\n'
-        'delta_vals = [deltas[m] for m in sorted_mods]\n'
+        "    for m in MODALITIES\n"
+        "}\n"
+        "sorted_mods = sorted(deltas, key=lambda m: -deltas[m])\n"
+        "delta_vals = [deltas[m] for m in sorted_mods]\n"
         'bar_colors = ["#c0392b" if d >= 0.05 else "#e8a87c" for d in delta_vals]\n'
-        '\n'
-        'fig, ax = plt.subplots(figsize=(7, 4))\n'
+        "\n"
+        "fig, ax = plt.subplots(figsize=(7, 4))\n"
         'ax.barh(sorted_mods, delta_vals, color=bar_colors, edgecolor="white")\n'
         'ax.axvline(0.05, color="gray", linestyle="--", linewidth=1, label="5% reference")\n'
         'ax.set_xlabel("Accuracy drop when modality removed")\n'
         'ax.set_title("Leave-one-out Modality Importance")\n'
-        'ax.legend()\n'
-        'for i, (m, d) in enumerate(zip(sorted_mods, delta_vals)):\n'
+        "ax.legend()\n"
+        "for i, (m, d) in enumerate(zip(sorted_mods, delta_vals)):\n"
         '    ax.text(d + 0.001, i, f"{d:.1%}", va="center", fontsize=10)\n'
-        'plt.tight_layout()\n'
+        "plt.tight_layout()\n"
         'plt.savefig("notebooks/ablation_importance.png", dpi=150)\n'
-        'plt.show()'
+        "plt.show()"
     ),
     md(
         "## 3. Geometry — UMAP of CDT Embeddings\n\n"
@@ -137,56 +142,56 @@ cells = [
         "classifier with no within-archetype geometry."
     ),
     code(
-        'from evaluation.geometry import compute_umap\n'
-        '\n'
-        'model = LateFusionMetaLearner()\n'
+        "from evaluation.geometry import compute_umap\n"
+        "\n"
+        "model = LateFusionMetaLearner()\n"
         'model.load_state_dict(torch.load("models/fusion_meta_learner.pt", weights_only=True))\n'
-        'model.eval()\n'
-        '\n'
-        'emb_list = [F.normalize(cache[m], dim=-1) for m in MODALITIES]\n'
-        'fusion_input = torch.cat(emb_list, dim=-1)\n'
-        'with torch.no_grad():\n'
-        '    cdt_embs = model.embed(fusion_input).numpy()\n'
-        '\n'
-        'reducer, embedding_2d = compute_umap(cdt_embs)\n'
+        "model.eval()\n"
+        "\n"
+        "emb_list = [F.normalize(cache[m], dim=-1) for m in MODALITIES]\n"
+        "fusion_input = torch.cat(emb_list, dim=-1)\n"
+        "with torch.no_grad():\n"
+        "    cdt_embs = model.embed(fusion_input).numpy()\n"
+        "\n"
+        "reducer, embedding_2d = compute_umap(cdt_embs)\n"
         'print(f"UMAP shape: {embedding_2d.shape}")'
     ),
     code(
-        '# (a) Coloured by archetype\n'
-        'palette = plt.cm.tab10.colors\n'
-        'fig, ax = plt.subplots(figsize=(9, 6))\n'
-        'for idx, label in enumerate(PERSONA_LABELS):\n'
-        '    mask = labels == idx\n'
-        '    ax.scatter(embedding_2d[mask, 0], embedding_2d[mask, 1],\n'
-        '               c=[palette[idx]], label=label, s=12, alpha=0.7)\n'
-        'ax.legend(fontsize=8, markerscale=2)\n'
+        "# (a) Coloured by archetype\n"
+        "palette = plt.cm.tab10.colors\n"
+        "fig, ax = plt.subplots(figsize=(9, 6))\n"
+        "for idx, label in enumerate(PERSONA_LABELS):\n"
+        "    mask = labels == idx\n"
+        "    ax.scatter(embedding_2d[mask, 0], embedding_2d[mask, 1],\n"
+        "               c=[palette[idx]], label=label, s=12, alpha=0.7)\n"
+        "ax.legend(fontsize=8, markerscale=2)\n"
         'ax.set_title("CDT Embeddings — UMAP coloured by archetype")\n'
         'ax.set_xlabel("UMAP-1"); ax.set_ylabel("UMAP-2")\n'
-        'plt.tight_layout()\n'
+        "plt.tight_layout()\n"
         'plt.savefig("notebooks/umap_archetype.png", dpi=150)\n'
-        'plt.show()'
+        "plt.show()"
     ),
     code(
-        '# (b) Coloured by price_sensitivity\n'
-        'configs = {}\n'
+        "# (b) Coloured by price_sensitivity\n"
+        "configs = {}\n"
         'with open("data/synthetic/participant_configs.jsonl") as f:\n'
-        '    for line in f:\n'
-        '        r = json.loads(line)\n'
+        "    for line in f:\n"
+        "        r = json.loads(line)\n"
         '        configs[r["participant_id"]] = r\n'
-        '\n'
+        "\n"
         'participant_ids = cache["participant_ids"]\n'
         'price_sens = np.array([configs.get(pid, {}).get("price_sensitivity", 0.5)\n'
-        '                       for pid in participant_ids])\n'
-        '\n'
-        'fig, ax = plt.subplots(figsize=(9, 6))\n'
-        'sc = ax.scatter(embedding_2d[:, 0], embedding_2d[:, 1],\n'
+        "                       for pid in participant_ids])\n"
+        "\n"
+        "fig, ax = plt.subplots(figsize=(9, 6))\n"
+        "sc = ax.scatter(embedding_2d[:, 0], embedding_2d[:, 1],\n"
         '                c=price_sens, cmap="RdYlGn_r", s=12, alpha=0.7, vmin=0, vmax=1)\n'
         'plt.colorbar(sc, ax=ax, label="price_sensitivity")\n'
         'ax.set_title("CDT Embeddings — UMAP coloured by price_sensitivity")\n'
         'ax.set_xlabel("UMAP-1"); ax.set_ylabel("UMAP-2")\n'
-        'plt.tight_layout()\n'
+        "plt.tight_layout()\n"
         'plt.savefig("notebooks/umap_price_sensitivity.png", dpi=150)\n'
-        'plt.show()\n'
+        "plt.show()\n"
         'print("Gradient within clusters -> CDT preserves within-archetype variation.\\n"\n'
         '      "Uniform colour within clusters -> embedding collapsed to archetype-only.")'
     ),
@@ -203,17 +208,17 @@ cells = [
         "Section 5 (config_probe) is the more sensitive test of whether any continuous latent variation survives."
     ),
     code(
-        'from evaluation.retrieval import evaluate as retrieval_eval\n'
-        'ret = retrieval_eval(log_mlflow=False)\n'
-        '\n'
-        'print(f"  {\'Modality\':<15} recall@1   recall@10")\n'
-        'print(f"  {\'-\'*40}")\n'
+        "from evaluation.retrieval import evaluate as retrieval_eval\n"
+        "ret = retrieval_eval(log_mlflow=False)\n"
+        "\n"
+        "print(f\"  {'Modality':<15} recall@1   recall@10\")\n"
+        "print(f\"  {'-'*40}\")\n"
         'for mod, m in ret["cdt_vs_single"].items():\n'
-        '    print(f"  {mod:<15} {m[\'recall_at_1\']:.4f}     {m[\'recall_at_10\']:.4f}")\n'
-        'print()\n'
+        "    print(f\"  {mod:<15} {m['recall_at_1']:.4f}     {m['recall_at_10']:.4f}\")\n"
+        "print()\n"
         'print("Single-vs-single:")\n'
         'for pair, m in ret["single_vs_single"].items():\n'
-        '    print(f"  {pair:<32} {m[\'recall_at_1\']:.4f}")\n'
+        "    print(f\"  {pair:<32} {m['recall_at_1']:.4f}\")\n"
         'print(f"\\nWithin-archetype chance baseline: {1/143:.4f}")'
     ),
     md(
@@ -229,24 +234,24 @@ cells = [
         "variation (R² ≥ 0.73 for all params) — the signal is there, just not at individual resolution"
     ),
     code(
-        'from evaluation.config_probe import probe\n'
-        'probe_results = probe(log_mlflow=False)\n'
-        '\n'
-        'CONFIG_PARAMS = list(probe_results.keys())\n'
+        "from evaluation.config_probe import probe\n"
+        "probe_results = probe(log_mlflow=False)\n"
+        "\n"
+        "CONFIG_PARAMS = list(probe_results.keys())\n"
         'PROBE_MODALITIES = ["fused", "trace", "transaction", "text", "psychographic"]\n'
-        'r2_matrix = np.array([[probe_results[p][m] for m in PROBE_MODALITIES]\n'
-        '                       for p in CONFIG_PARAMS])\n'
-        '\n'
-        'fig, ax = plt.subplots(figsize=(9, 5))\n'
+        "r2_matrix = np.array([[probe_results[p][m] for m in PROBE_MODALITIES]\n"
+        "                       for p in CONFIG_PARAMS])\n"
+        "\n"
+        "fig, ax = plt.subplots(figsize=(9, 5))\n"
         'sns.heatmap(r2_matrix, annot=True, fmt=".3f",\n'
-        '            xticklabels=PROBE_MODALITIES, yticklabels=CONFIG_PARAMS,\n'
+        "            xticklabels=PROBE_MODALITIES, yticklabels=CONFIG_PARAMS,\n"
         '            cmap="YlGn", vmin=-0.1, vmax=1.0, ax=ax,\n'
         '            linewidths=0.5, cbar_kws={"label": "R²"})\n'
         'ax.set_title("PersonaConfig Regression Probe — R² by parameter × modality")\n'
         'ax.set_xlabel("Embedding space")\n'
-        'plt.tight_layout()\n'
+        "plt.tight_layout()\n"
         'plt.savefig("notebooks/config_probe_heatmap.png", dpi=150)\n'
-        'plt.show()'
+        "plt.show()"
     ),
     md(
         "## 6. Text Encoder Diagnostic\n\n"
@@ -258,38 +263,38 @@ cells = [
         "If mean similarity > 0.95, the narratives are trivially separable."
     ),
     code(
-        'from encoders.text.embed import TextEncoder\n'
-        '\n'
-        'text_enc = TextEncoder(n_classes=7)\n'
+        "from encoders.text.embed import TextEncoder\n"
+        "\n"
+        "text_enc = TextEncoder(n_classes=7)\n"
         'text_state = torch.load(CHECKPOINT_PATHS["text"], weights_only=True)\n'
-        'text_enc.load_state_dict(text_state, strict=False)\n'
-        'text_enc.eval()\n'
-        '\n'
-        'narratives = {}\n'
+        "text_enc.load_state_dict(text_state, strict=False)\n"
+        "text_enc.eval()\n"
+        "\n"
+        "narratives = {}\n"
         'with open("data/synthetic/narratives.jsonl") as f:\n'
-        '    for line in f:\n'
-        '        r = json.loads(line)\n'
+        "    for line in f:\n"
+        "        r = json.loads(line)\n"
         '        narratives[r["participant_id"]] = r.get("text", "")\n'
-        '\n'
+        "\n"
         'participant_ids = cache["participant_ids"]\n'
         'texts = [narratives.get(pid, "") for pid in participant_ids]\n'
-        'valid_mask = [bool(t) for t in texts]\n'
-        'texts_valid = [t for t, v in zip(texts, valid_mask) if v]\n'
-        'labels_valid = labels[[i for i, v in enumerate(valid_mask) if v]]\n'
-        '\n'
-        'with torch.no_grad():\n'
-        '    sent_embs = text_enc.encode_texts(texts_valid)\n'
-        'sent_norm = F.normalize(sent_embs, dim=-1)\n'
-        '\n'
-        'print(f"  {\'Archetype\':<25} mean_intra_sim  n")\n'
-        'print(f"  {\'-\'*50}")\n'
-        'for idx, label in enumerate(PERSONA_LABELS):\n'
-        '    mask = labels_valid == idx\n'
-        '    if mask.sum() < 2:\n'
-        '        continue\n'
-        '    embs_arch = sent_norm[mask]\n'
-        '    sim_mat = (embs_arch @ embs_arch.T).numpy()\n'
-        '    np.fill_diagonal(sim_mat, np.nan)\n'
+        "valid_mask = [bool(t) for t in texts]\n"
+        "texts_valid = [t for t, v in zip(texts, valid_mask) if v]\n"
+        "labels_valid = labels[[i for i, v in enumerate(valid_mask) if v]]\n"
+        "\n"
+        "with torch.no_grad():\n"
+        "    sent_embs = text_enc.encode_texts(texts_valid)\n"
+        "sent_norm = F.normalize(sent_embs, dim=-1)\n"
+        "\n"
+        "print(f\"  {'Archetype':<25} mean_intra_sim  n\")\n"
+        "print(f\"  {'-'*50}\")\n"
+        "for idx, label in enumerate(PERSONA_LABELS):\n"
+        "    mask = labels_valid == idx\n"
+        "    if mask.sum() < 2:\n"
+        "        continue\n"
+        "    embs_arch = sent_norm[mask]\n"
+        "    sim_mat = (embs_arch @ embs_arch.T).numpy()\n"
+        "    np.fill_diagonal(sim_mat, np.nan)\n"
         '    print(f"  {label:<25} {np.nanmean(sim_mat):.4f}          {mask.sum()}")\n'
         'print("\\nThreshold: mean_sim > 0.95 -> trivially separable in LLM space")'
     ),

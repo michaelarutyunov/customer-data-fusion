@@ -1,4 +1,5 @@
 """Create notebooks/04_counterfactual_tests.ipynb"""
+
 import json
 from pathlib import Path
 
@@ -6,7 +7,11 @@ nb = {
     "nbformat": 4,
     "nbformat_minor": 5,
     "metadata": {
-        "kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"},
+        "kernelspec": {
+            "display_name": "Python 3",
+            "language": "python",
+            "name": "python3",
+        },
         "language_info": {"name": "python", "version": "3.14.0"},
     },
     "cells": [],
@@ -42,60 +47,62 @@ cells = [
         "Option B (generator re-run) is deferred to bead `sei`."
     ),
     code(
-        'import sys\n'
+        "import sys\n"
         'sys.path.insert(0, ".")\n'
-        '\n'
-        'import numpy as np\n'
-        'import matplotlib.pyplot as plt\n'
-        'import matplotlib.patches as mpatches\n'
-        '\n'
-        'from evaluation.counterfactual import simulate, PERSONA_IDS\n'
-        '\n'
-        'results = simulate()\n'
-        'SCENARIOS = list(results.keys())\n'
-        'SCENARIO_LABELS = {\n'
+        "\n"
+        "import numpy as np\n"
+        "import matplotlib.pyplot as plt\n"
+        "import matplotlib.patches as mpatches\n"
+        "\n"
+        "from evaluation.counterfactual import simulate, PERSONA_IDS\n"
+        "\n"
+        "results = simulate()\n"
+        "SCENARIOS = list(results.keys())\n"
+        "SCENARIO_LABELS = {\n"
         '    "price_increase_20pct": "+20% price (all alternatives)",\n'
         '    "new_entrant_best_in_class": "New entrant (best quality, mid-price, unknown brand)",\n'
         '    "brand_removal": "Preferred brand removed",\n'
-        '}\n'
+        "}\n"
         'print("Results loaded for", len(SCENARIOS), "scenarios")'
     ),
-    md("## Scenario 1 — +20% Price Increase\n\n"
-       "Rule: `defect_share = clamp(price_sensitivity × (0.20 / price_variance_tolerance), 0.95)`\n\n"
-       "Price Lexicographic is most sensitive (price_sensitivity=0.85, price_variance_tolerance=0.10 → "
-       "2× tolerance exceeded). Brand Heuristic is least sensitive (price_sensitivity=0.20, "
-       "brand loyalty absorbs the increase)."),
+    md(
+        "## Scenario 1 — +20% Price Increase\n\n"
+        "Rule: `defect_share = clamp(price_sensitivity × (0.20 / price_variance_tolerance), 0.95)`\n\n"
+        "Price Lexicographic is most sensitive (price_sensitivity=0.85, price_variance_tolerance=0.10 → "
+        "2× tolerance exceeded). Brand Heuristic is least sensitive (price_sensitivity=0.20, "
+        "brand loyalty absorbs the increase)."
+    ),
     code(
-        'def print_table(scenario_key):\n'
-        '    r = results[scenario_key]\n'
+        "def print_table(scenario_key):\n"
+        "    r = results[scenario_key]\n"
         '    print("{:<26} {:>7} {:>8}  {}".format("Archetype", "Stay", "Defect", "Defect to"))\n'
         '    print("-" * 72)\n'
-        '    for pid in PERSONA_IDS:\n'
-        '        d = r[pid]\n'
+        "    for pid in PERSONA_IDS:\n"
+        "        d = r[pid]\n"
         '        print("{:<26} {:>7.1%} {:>8.1%}  {}".format(\n'
         '            d["label"], d["stay_share"], d["defect_share"], d["defect_to"]))\n'
-        '\n'
+        "\n"
         'print_table("price_increase_20pct")'
     ),
     code(
-        '# Bar chart: defect share by archetype\n'
+        "# Bar chart: defect share by archetype\n"
         'labels_arch = [results[scenario][pid]["label"] for pid in PERSONA_IDS]\n'
         'defect_vals = [results[scenario][pid]["defect_share"] for pid in PERSONA_IDS]\n'
         'stay_vals = [results[scenario][pid]["stay_share"] for pid in PERSONA_IDS]\n'
-        '\n'
-        'x = np.arange(len(PERSONA_IDS))\n'
-        'fig, ax = plt.subplots(figsize=(10, 4))\n'
+        "\n"
+        "x = np.arange(len(PERSONA_IDS))\n"
+        "fig, ax = plt.subplots(figsize=(10, 4))\n"
         'ax.bar(x, stay_vals, label="Stay", color="#2ecc71")\n'
         'ax.bar(x, defect_vals, bottom=stay_vals, label="Defect", color="#e74c3c")\n'
-        'ax.set_xticks(x)\n'
+        "ax.set_xticks(x)\n"
         'ax.set_xticklabels(labels_arch, rotation=30, ha="right", fontsize=9)\n'
         'ax.set_ylabel("Share")\n'
         'ax.set_title("+20% Price Increase — Choice Redistribution by Archetype")\n'
-        'ax.legend()\n'
-        'ax.set_ylim(0, 1.0)\n'
-        'plt.tight_layout()\n'
+        "ax.legend()\n"
+        "ax.set_ylim(0, 1.0)\n"
+        "plt.tight_layout()\n"
         'plt.savefig("notebooks/counterfactual_price.png", dpi=150)\n'
-        'plt.show()'
+        "plt.show()"
     ),
     md(
         "**Sanity check:** Price Lexicographic shows highest defection (95%) — ✓ matches "
@@ -103,29 +110,31 @@ cells = [
         "Brand Heuristic shows lowest price-driven defection (11.4%) — ✓ brand loyalty "
         "absorbs the cost increase (price_sensitivity=0.20)."
     ),
-    md("## Scenario 2 — New Entrant (Best Quality, Mid-Price, Unknown Brand)\n\n"
-       "The new entrant is attractive only to archetypes whose decision heuristic is compatible "
-       "with its offer profile. Quality Seeker has highest consideration (best quality = primary attribute). "
-       "Brand Heuristic has lowest (unknown brand = disqualified, openness_to_new=0.15, brand_loyalty=0.85)."),
+    md(
+        "## Scenario 2 — New Entrant (Best Quality, Mid-Price, Unknown Brand)\n\n"
+        "The new entrant is attractive only to archetypes whose decision heuristic is compatible "
+        "with its offer profile. Quality Seeker has highest consideration (best quality = primary attribute). "
+        "Brand Heuristic has lowest (unknown brand = disqualified, openness_to_new=0.15, brand_loyalty=0.85)."
+    ),
     code('print_table("new_entrant_best_in_class")'),
     code(
         'labels_arch = [results[scenario][pid]["label"] for pid in PERSONA_IDS]\n'
         'defect_vals = [results[scenario][pid]["defect_share"] for pid in PERSONA_IDS]\n'
         'stay_vals = [results[scenario][pid]["stay_share"] for pid in PERSONA_IDS]\n'
-        '\n'
-        'x = np.arange(len(PERSONA_IDS))\n'
-        'fig, ax = plt.subplots(figsize=(10, 4))\n'
+        "\n"
+        "x = np.arange(len(PERSONA_IDS))\n"
+        "fig, ax = plt.subplots(figsize=(10, 4))\n"
         'ax.bar(x, stay_vals, label="Stay", color="#2ecc71")\n'
         'ax.bar(x, defect_vals, bottom=stay_vals, label="To new entrant", color="#3498db")\n'
-        'ax.set_xticks(x)\n'
+        "ax.set_xticks(x)\n"
         'ax.set_xticklabels(labels_arch, rotation=30, ha="right", fontsize=9)\n'
         'ax.set_ylabel("Share")\n'
         'ax.set_title("New Entrant — Predicted Adoption by Archetype")\n'
-        'ax.legend()\n'
-        'ax.set_ylim(0, 1.0)\n'
-        'plt.tight_layout()\n'
+        "ax.legend()\n"
+        "ax.set_ylim(0, 1.0)\n"
+        "plt.tight_layout()\n"
         'plt.savefig("notebooks/counterfactual_entrant.png", dpi=150)\n'
-        'plt.show()'
+        "plt.show()"
     ),
     md(
         "**Sanity check:** Quality Seeker shows highest adoption (40%) — ✓ best quality = "
@@ -133,30 +142,32 @@ cells = [
         "inspect all attributes so best-in-class quality registers. Brand Heuristic barely "
         "considers it (2.3%) — ✓ unknown brand triggers disqualification before quality is evaluated."
     ),
-    md("## Scenario 3 — Preferred Brand Removed\n\n"
-       "Rule: `defect_share = brand_loyalty`\n\n"
-       "Brand Heuristic (brand_loyalty=0.85) is most disrupted. Price Lexicographic "
-       "(brand_loyalty=0.25) barely notices. Brand Heuristic defectors go to "
-       "`no_preferred_alternative` — they may exit the market rather than accept a substitute."),
+    md(
+        "## Scenario 3 — Preferred Brand Removed\n\n"
+        "Rule: `defect_share = brand_loyalty`\n\n"
+        "Brand Heuristic (brand_loyalty=0.85) is most disrupted. Price Lexicographic "
+        "(brand_loyalty=0.25) barely notices. Brand Heuristic defectors go to "
+        "`no_preferred_alternative` — they may exit the market rather than accept a substitute."
+    ),
     code('print_table("brand_removal")'),
     code(
         'labels_arch = [results[scenario][pid]["label"] for pid in PERSONA_IDS]\n'
         'defect_vals = [results[scenario][pid]["defect_share"] for pid in PERSONA_IDS]\n'
         'stay_vals = [results[scenario][pid]["stay_share"] for pid in PERSONA_IDS]\n'
-        '\n'
-        'x = np.arange(len(PERSONA_IDS))\n'
-        'fig, ax = plt.subplots(figsize=(10, 4))\n'
+        "\n"
+        "x = np.arange(len(PERSONA_IDS))\n"
+        "fig, ax = plt.subplots(figsize=(10, 4))\n"
         'ax.bar(x, stay_vals, label="Stay", color="#2ecc71")\n'
         'ax.bar(x, defect_vals, bottom=stay_vals, label="Defect (no preferred brand)", color="#e67e22")\n'
-        'ax.set_xticks(x)\n'
+        "ax.set_xticks(x)\n"
         'ax.set_xticklabels(labels_arch, rotation=30, ha="right", fontsize=9)\n'
         'ax.set_ylabel("Share")\n'
         'ax.set_title("Brand Removal — Disruption by Archetype")\n'
-        'ax.legend()\n'
-        'ax.set_ylim(0, 1.0)\n'
-        'plt.tight_layout()\n'
+        "ax.legend()\n"
+        "ax.set_ylim(0, 1.0)\n"
+        "plt.tight_layout()\n"
         'plt.savefig("notebooks/counterfactual_brand.png", dpi=150)\n'
-        'plt.show()'
+        "plt.show()"
     ),
     md(
         "**Sanity check:** Brand Heuristic shows highest disruption (85%) — ✓ brand_loyalty=0.85. "
@@ -169,11 +180,11 @@ cells = [
         "Which archetype is most/least sensitive to each scenario?"
     ),
     code(
-        'for scenario_key, scenario_label in SCENARIO_LABELS.items():\n'
-        '    ranked = sorted(PERSONA_IDS,\n'
+        "for scenario_key, scenario_label in SCENARIO_LABELS.items():\n"
+        "    ranked = sorted(PERSONA_IDS,\n"
         '                    key=lambda p: -results[scenario_key][p]["defect_share"])\n'
-        '    most = results[scenario_key][ranked[0]]\n'
-        '    least = results[scenario_key][ranked[-1]]\n'
+        "    most = results[scenario_key][ranked[0]]\n"
+        "    least = results[scenario_key][ranked[-1]]\n"
         '    print("\\n" + scenario_label)\n'
         '    print("  Most sensitive:  {:<26} ({:.1%} defect)".format(\n'
         '          most["label"], most["defect_share"]))\n'
