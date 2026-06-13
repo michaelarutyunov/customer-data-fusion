@@ -459,10 +459,34 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="Run a single probe instead of all 4",
     )
+    parser.add_argument(
+        "--split-type",
+        choices=["random", "temporal"],
+        default="temporal",
+        help=(
+            "Evaluation split methodology (default: temporal). "
+            "'random' = stratified participant split (legacy). "
+            "'temporal' = months 1-8 train, 9-12 eval (per docs/modalities.md). "
+            "Note: temporal split requires month-partitioned data from the pipeline."
+        ),
+    )
     args = parser.parse_args(argv)
 
     device = args.device
     logger.info("Device: %s", device)
+    logger.info("Split type: %s", args.split_type)
+
+    if args.split_type == "temporal":
+        from evaluation.temporal_split import (
+            DEFAULT_EVAL_MONTHS,
+            DEFAULT_TRAIN_MONTHS,
+        )
+
+        logger.info(
+            "Temporal split: train months %s, eval months %s",
+            list(DEFAULT_TRAIN_MONTHS),
+            list(DEFAULT_EVAL_MONTHS),
+        )
 
     results: dict[str, dict] = {}
 
