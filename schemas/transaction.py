@@ -24,6 +24,14 @@ class PurchaseType(str, Enum):
     DEAL_DRIVEN = "deal_driven"  # triggered by promotion
 
 
+class PaymentMethod(str, Enum):
+    CREDIT_CARD = "credit_card"
+    DEBIT_CARD = "debit_card"
+    PAYPAL = "paypal"
+    CASH = "cash"
+    BNPL = "bnpl"  # buy now, pay later
+
+
 @dataclass(frozen=True)
 class TransactionRecord:
     """
@@ -47,4 +55,10 @@ class TransactionRecord:
     purchase_type: PurchaseType
     on_promotion: bool
     persona_id: str  # ground truth archetype (synthetic data only)
+    sku: str = ""  # realistic order-line identifier: SKU-{category}-{tier}-{seq}; populated by Phase 2c
+    unit_price: float = 0.0  # absolute price; populated by Phase 2c
+    discount_applied: Optional[float] = (
+        None  # 0.0–0.3 discount fraction; None if no discount
+    )
+    payment_method: PaymentMethod = PaymentMethod.CREDIT_CARD
     loyalty_card: Optional[bool] = None  # retailer loyalty programme membership

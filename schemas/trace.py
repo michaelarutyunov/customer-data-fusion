@@ -7,7 +7,22 @@ Variable-length sequences per trial handled by Transformer with positional encod
 
 from __future__ import annotations
 from dataclasses import dataclass
+from enum import Enum
 from typing import Optional
+
+
+class EventType(str, Enum):
+    """
+    Realistic event types for instrumented hover/exposure logging on a
+    product comparison page or configurator. Framed as CRM-style front-end
+    event log rather than lab artefact (see docs/modalities/mouselab.md).
+    """
+
+    CELL_HOVER = "cell_hover"  # Shallow inspection (dwell < 800ms)
+    CELL_OPEN = "cell_open"  # Deep inspection (dwell >= 800ms)
+    COLUMN_ADD = "column_add"  # First inspection in a new attribute column
+    SORT_APPLY = "sort_apply"  # Strategy-driven attribute switch mid-sequence
+    CHOICE = "choice"  # Final selection of an alternative
 
 
 @dataclass(frozen=True)
@@ -29,6 +44,9 @@ class AcquisitionEvent:
     timestamp_s: float  # seconds from trial start
     dwell_ms: float  # inspection duration in milliseconds
     is_reinspection: bool  # True if this cell was previously inspected this trial
+    event_type: EventType = (
+        EventType.CELL_HOVER
+    )  # interaction type for realistic framing
 
 
 @dataclass(frozen=True)

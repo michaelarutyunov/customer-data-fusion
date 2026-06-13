@@ -18,6 +18,7 @@ class Strategy(str, Enum):
     AFFECT_HEURISTIC = "affect_heuristic"
     RANDOM = "random"
     ADAPTIVE = "adaptive"
+    ELIMINATION_BY_ASPECTS = "elimination_by_aspects"
 
 
 class InspectionDepth(str, Enum):
@@ -139,31 +140,52 @@ class LatentDeviation:
 
     Axes
     ----
+    preference block (drives *what* the customer wants):
     price_lean   : sensitivity to price (drives price_sensitivity, price_consciousness,
                    price-column trace inspection, price language in narrative)
     brand_lean   : brand loyalty (drives brand_loyalty, brand_sensitivity,
                    brand-column trace inspection, trusted-brand narrative language)
-    thoroughness : depth of search (drives inspection depth jitter, prop_cells_inspected,
-                   involvement_score, maximiser_score, "deliberate" narrative language)
-    impulsivity  : tendency to short-circuit search (drives p_strategy_lapse,
-                   purchase_type=IMPULSE share, shorter dwell, impulsive narrative language)
+
+    process block (drives *how* the customer decides — deliberately weakly correlated
+    with the preference block so process traces carry non-redundant information):
+    thoroughness      : depth of search (drives inspection depth jitter, prop_cells_inspected,
+                         involvement_score, maximiser_score, "deliberate" narrative language)
+    impulsivity       : tendency to short-circuit search (drives p_strategy_lapse,
+                         purchase_type=IMPULSE share, shorter dwell, impulsive narrative language)
+    search_orientation: Payne Index tendency as a latent trait (positive = alternative-wise,
+                         negative = attribute-wise). Makes search orientation a sampled individual
+                         property, not just an emergent output of strategy simulation.
+    attentional_bias  : controls divergence between dwell attention allocation and choice
+                         preference weights. When nonzero, the trace modality carries information
+                         that preferences alone cannot recover — the critical non-redundancy property.
+
+    hybrid:
     openness     : willingness to try new options (drives openness_to_new,
                    risk_tolerance, brand-tier spread, "open to new" narrative language)
     """
 
+    # Preference block — drives *what* the customer wants
     price_lean: float = 0.0
     brand_lean: float = 0.0
+
+    # Process block — drives *how* the customer decides
     thoroughness: float = 0.0
     impulsivity: float = 0.0
+    search_orientation: float = 0.0
+    attentional_bias: float = 0.0
+
+    # Hybrid — affects both preference and process
     openness: float = 0.0
 
-    def as_tuple(self) -> tuple[float, float, float, float, float]:
-        """Latent as an ordered 5-tuple for vectorised projection in generators."""
+    def as_tuple(self) -> tuple[float, float, float, float, float, float, float]:
+        """Latent as an ordered 7-tuple for vectorised projection in generators."""
         return (
             self.price_lean,
             self.brand_lean,
             self.thoroughness,
             self.impulsivity,
+            self.search_orientation,
+            self.attentional_bias,
             self.openness,
         )
 
@@ -195,3 +217,8 @@ class PersonaConfig:
     # zero vector (= archetype mean, no individual deviation) so that existing
     # call sites and serialised configs that predate this field remain valid.
     latent: Optional[LatentDeviation] = None
+
+    # Temporal month index for AR(1) drift simulation (0 = baseline, 1-12 = simulated months).
+    # persona_sampler creates one PersonaConfig per month with month-specific drift state.
+    # Default 0 preserves backward compatibility with existing call sites.
+    month: int = 0

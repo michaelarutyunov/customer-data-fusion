@@ -18,8 +18,13 @@ from schemas.persona import (
     InspectionDepth,
     PriceConsciousness,
 )
-from schemas.trace import AcquisitionEvent, TrialRecord
-from schemas.transaction import TransactionRecord, Channel, PurchaseType
+from schemas.trace import AcquisitionEvent, TrialRecord, EventType
+from schemas.transaction import (
+    TransactionRecord,
+    Channel,
+    PurchaseType,
+    PaymentMethod,
+)
 from schemas.text import PersonaNarrative
 from schemas.psychographic import PsychographicVector
 
@@ -49,6 +54,8 @@ CHECKPOINT_PATHS: dict[str, Path] = {
     "transaction": Path("models/transaction_encoder.pt"),
     "text": Path("models/text_encoder.pt"),
     "psychographic": Path("models/psychographic_encoder.pt"),
+    "clickstream": Path("models/clickstream_encoder.pt"),
+    "campaign": Path("models/campaign_encoder.pt"),
     "fusion": Path("models/fusion_meta_learner.pt"),
 }
 
@@ -77,10 +84,12 @@ __all__ = [
     # Trace
     "AcquisitionEvent",
     "TrialRecord",
+    "EventType",
     # Transaction
     "TransactionRecord",
     "Channel",
     "PurchaseType",
+    "PaymentMethod",
     # Text
     "PersonaNarrative",
     # Psychographic

@@ -185,6 +185,7 @@ Every bead that dispatches parallel sub-agents must include an explicit **Merge 
 | PRD validation | `.claude/context/prd-validation.md` |
 | Prototype summary | `.claude/context/prototype-summary.md` |
 | Post-prototype capabilities | `.claude/context/new-capabilities.md` |
+| Modality expansion plan | `.claude/context/modality-expansion.md` |
 
 ---
 
