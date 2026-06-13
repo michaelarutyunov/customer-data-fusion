@@ -4,14 +4,16 @@ fusion/meta_learner.py
 Late fusion meta-learner for Consumer Digital Twin embedding.
 
 Architecture (Phase 2, default v0.1):
-    [B, 512] → Linear(512, 256) → LayerNorm(256) → GELU → Dropout(0.2)
-           → Linear(256, 128) → LayerNorm(128) → GELU → Dropout(0.1)
-           → Linear(128, 7) [classification head]
-
-Phase 1 (logistic baseline):
-    [B, 512] → Linear(512, 7) [single layer, no hidden layers]
+    [B, n_modalities*128] → Linear(→256) → LayerNorm → GELU → Dropout(0.2)
+           → Linear(→128) → LayerNorm → GELU → Dropout(0.1)
+           → Linear(→7) [classification head]
 
 The 128-dim output of the second hidden layer (Phase 2) is the CDT embedding.
+
+Supports variable modality count (default 6: trace + transaction + text +
+psychographic + clickstream + campaign). Missing modalities (e.g., no traces
+for customers outside the coverage subset) are replaced with a learned MISSING
+embedding before concatenation.
 """
 
 from __future__ import annotations
@@ -24,14 +26,20 @@ import torch.nn.functional as F
 class LateFusionMetaLearner(nn.Module):
     """Late fusion meta-learner for multimodal behavioural embeddings.
 
-    Combines four frozen modality encoder outputs (each 128-dim) into a
-    single consumer behavioural embedding (CDT embedding, 128-dim) and
-    predicts persona archetype (7-class classification).
+    Combines modality encoder outputs (each 128-dim) into a single consumer
+    behavioural embedding (CDT embedding, 128-dim) and predicts persona
+    archetype (7-class classification).
 
     Parameters
     ----------
-    input_dim : int
-        Dimension of concatenated modality embeddings (default: 512 = 4 × 128).
+    n_modalities : int
+        Number of modality encoder inputs (default: 6). The concatenated input
+        dimension is ``n_modalities * per_modality_dim``.
+    per_modality_dim : int
+        Dimension of each modality encoder output (default: 128 = EMBEDDING_DIM).
+    input_dim : int, optional
+        Explicit concatenated input dimension. Overrides the
+        ``n_modalities * per_modality_dim`` computation if given.
     hidden_dim : int
         Dimension of first hidden layer (default: 256).
     embed_dim : int
@@ -42,25 +50,46 @@ class LateFusionMetaLearner(nn.Module):
         Dropout probability for hidden layers (default: 0.2).
     phase : {"1", "2"}
         Architecture phase: "1" = logistic baseline, "2" = shallow MLP (default).
+    use_missing_embedding : bool
+        If True, register a learnable MISSING embedding vector for absent
+        modalities (partial coverage). Default: True.
     """
 
     def __init__(
         self,
-        input_dim: int = 512,
+        n_modalities: int = 6,
+        per_modality_dim: int = 128,
+        input_dim: int | None = None,
         hidden_dim: int = 256,
         embed_dim: int = 128,
         n_classes: int = 7,
         dropout: float = 0.2,
         phase: str = "2",
+        use_missing_embedding: bool = True,
     ) -> None:
         super().__init__()
 
+        # Compute input_dim from n_modalities if not explicitly given
+        if input_dim is None:
+            input_dim = n_modalities * per_modality_dim
+
         self.input_dim = input_dim
+        self.n_modalities = n_modalities
+        self.per_modality_dim = per_modality_dim
         self.hidden_dim = hidden_dim
         self.embed_dim = embed_dim
         self.n_classes = n_classes
         self.dropout = dropout
         self.phase = phase
+
+        # Learnable MISSING embedding: replaces absent modality outputs.
+        # One vector per modality slot so each slot learns its own "missing" signal.
+        self.use_missing_embedding = use_missing_embedding
+        if use_missing_embedding:
+            self.missing_embedding = nn.Parameter(
+                torch.zeros(n_modalities, per_modality_dim)
+            )
+            nn.init.normal_(self.missing_embedding, mean=0.0, std=0.02)
 
         if phase == "1":
             # Phase 1: Logistic regression baseline
@@ -87,13 +116,46 @@ class LateFusionMetaLearner(nn.Module):
         else:
             raise ValueError(f"Invalid phase: {phase}. Must be '1' or '2'.")
 
+    def apply_missing_mask(
+        self,
+        modality_embeddings: list[torch.Tensor],
+        presence_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Concatenate modality embeddings, replacing absent ones with MISSING.
+
+        Parameters
+        ----------
+        modality_embeddings : list of Tensor, each [B, per_modality_dim]
+            One tensor per modality (length must equal n_modalities).
+        presence_mask : Tensor, shape [B, n_modalities], optional
+            True where the modality is present, False where absent (use MISSING).
+            If None, all modalities assumed present.
+
+        Returns
+        -------
+        Tensor, shape [B, input_dim]
+            Concatenated embeddings with MISSING substitution applied.
+        """
+        B = modality_embeddings[0].size(0)
+        slots: list[torch.Tensor] = []
+        for i, emb in enumerate(modality_embeddings):
+            if presence_mask is not None:
+                # Broadcast mask: [B, 1] for selecting per-modality
+                present = presence_mask[:, i].unsqueeze(-1)  # [B, 1]
+                missing_vec = self.missing_embedding[i].unsqueeze(0).expand(B, -1)
+                slot = torch.where(present, emb, missing_vec)
+            else:
+                slot = emb
+            slots.append(slot)
+        return torch.cat(slots, dim=-1)  # [B, n_modalities * per_modality_dim]
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass for training.
 
         Parameters
         ----------
         x : torch.Tensor
-            Concatenated modality embeddings, shape [B, 512].
+            Concatenated modality embeddings, shape [B, input_dim].
 
         Returns
         -------
