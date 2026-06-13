@@ -292,11 +292,15 @@ def run_pipeline(
             "trials": open(output_dir / "trials.jsonl", "w"),
             "transactions": open(output_dir / "transactions.jsonl", "w"),
             "psychographics": open(output_dir / "psychographics.jsonl", "w"),
-            "narratives": open(output_dir / "narratives.jsonl", "w"),
             "participant_configs": open(output_dir / "participant_configs.jsonl", "w"),
             "clickstream": open(output_dir / "clickstream.jsonl", "w"),
             "campaigns": open(output_dir / "campaigns.jsonl", "w"),
         }
+        # Only open narratives.jsonl when actually generating. With
+        # --skip-narratives we leave any existing file untouched instead of
+        # truncating it (the write path is guarded by `not skip_narratives`).
+        if not skip_narratives:
+            handles["narratives"] = open(output_dir / "narratives.jsonl", "w")
         month_handles = {}
         for month in range(1, n_months + 1):
             mm = f"{month:02d}"
@@ -312,6 +316,9 @@ def run_pipeline(
 
     counts: dict[str, int] = {k: 0 for k in handles}
     counts["narrative_failures"] = 0
+    # Keep the narratives count key present in the report even when generation
+    # is skipped (no handle opened in that case).
+    counts.setdefault("narratives", 0)
     n_validation_failures = 0
 
     # ------------------------------------------------------------------

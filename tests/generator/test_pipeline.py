@@ -193,6 +193,17 @@ class TestCrossModalConsistency:
         assert click_pids == psycho_pids
         assert camp_pids == psycho_pids
 
+    def test_skip_narratives_preserves_existing_file(self, tmp_path: Path):
+        # Regression: --skip-narratives must NOT truncate an existing
+        # narratives.jsonl (it previously opened the file in write mode before
+        # the skip check, wiping costly LLM-generated content).
+        (tmp_path / "narratives.jsonl").write_text(
+            '{"participant_id": "sentinel_0001", "narrative": "keep me"}\n'
+        )
+        run_pipeline(n=1, output_dir=tmp_path, skip_narratives=True)
+        content = (tmp_path / "narratives.jsonl").read_text()
+        assert "keep me" in content, "--skip-narratives truncated narratives.jsonl"
+
 
 # ---------------------------------------------------------------------------
 # JSONL format
