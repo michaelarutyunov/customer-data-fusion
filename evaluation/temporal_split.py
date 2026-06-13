@@ -54,13 +54,30 @@ def temporal_train_test_split(
 
     train_records: list[dict] = []
     eval_records: list[dict] = []
+    dropped_missing = 0
+    dropped_out_of_range = 0
 
     for rec in records:
-        month = rec.get("month", 0)
+        month = rec.get("month")
+        if month is None:
+            dropped_missing += 1
+            continue
         if month in train_set:
             train_records.append(rec)
         elif month in eval_set:
             eval_records.append(rec)
+        else:
+            dropped_out_of_range += 1
+
+    if dropped_missing or dropped_out_of_range:
+        log.warning(
+            "temporal_split.records_dropped",
+            n_missing_month=dropped_missing,
+            n_out_of_range=dropped_out_of_range,
+            pct_dropped=100.0
+            * (dropped_missing + dropped_out_of_range)
+            / max(len(records), 1),
+        )
 
     log.info(
         "temporal_split.applied",
@@ -73,13 +90,30 @@ def temporal_train_test_split(
     return train_records, eval_records
 
 
+# Allowlist of valid modality names (prevents path traversal via the modality param).
+# Matches the data modalities that have month-partitioned files.
+_VALID_MODALITIES: frozenset[str] = frozenset(
+    {"transactions", "clickstream", "campaigns", "traces", "psychographics"}
+)
+
+
 def load_monthly_modality(
     modality: str, months: Sequence[int], data_dir: Path = DATA_DIR
 ) -> list[dict]:
     """Load month-partitioned files for an event-stream modality.
 
     Reads ``{modality}_month_{MM}.jsonl`` files for the given months.
+
+    Raises
+    ------
+    ValueError
+        If ``modality`` is not in the allowlist (prevents path traversal).
     """
+    if modality not in _VALID_MODALITIES:
+        raise ValueError(
+            f"Invalid modality '{modality}'. Must be one of {sorted(_VALID_MODALITIES)}"
+        )
+
     records: list[dict] = []
     for month in months:
         path = data_dir / f"{modality}_month_{month:02d}.jsonl"
