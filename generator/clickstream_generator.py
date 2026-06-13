@@ -186,6 +186,7 @@ def _generate_single_session(
     device: DeviceType,
     referrer: ReferrerType,
     customer_id: str,
+    participant_id: str,
     session_id: str,
     session_start: datetime,
     month: int,
@@ -209,6 +210,7 @@ def _generate_single_session(
             events.append(
                 ClickstreamEvent(
                     customer_id=customer_id,
+                    participant_id=participant_id,
                     session_id=session_id,
                     event_ts=event_ts.isoformat(),
                     event_type=event_type,
@@ -224,6 +226,7 @@ def _generate_single_session(
         duration = (event_ts - session_start).total_seconds()
         summary = SessionSummary(
             customer_id=customer_id,
+            participant_id=participant_id,
             session_id=session_id,
             n_events=len(events),
             session_duration_s=duration,
@@ -248,6 +251,7 @@ def _generate_single_session(
         events.append(
             ClickstreamEvent(
                 customer_id=customer_id,
+                participant_id=participant_id,
                 session_id=session_id,
                 event_ts=event_ts.isoformat(),
                 event_type=event_type,
@@ -274,6 +278,7 @@ def _generate_single_session(
     duration = (event_ts - session_start).total_seconds()
     summary = SessionSummary(
         customer_id=customer_id,
+        participant_id=participant_id,
         session_id=session_id,
         n_events=len(events),
         session_duration_s=duration,
@@ -328,6 +333,7 @@ def _maybe_sku(rng: np.random.Generator, state: str) -> Optional[str]:
 
 def simulate_clickstream(
     config: PersonaConfig,
+    participant_id: str,
     month: int = 1,
     random_seed: Optional[int] = None,
 ) -> tuple[list[ClickstreamEvent], list[SessionSummary]]:
@@ -391,6 +397,8 @@ def simulate_clickstream(
         # Decide if anonymous session
         is_anonymous = rng.random() < anonymous_prob
         customer_id = "anonymous" if is_anonymous else config.persona_id
+        # Anonymous sessions carry no individual attribution (participant_id="")
+        session_participant_id = "" if is_anonymous else participant_id
 
         # Decide if bounce session
         is_bounce = rng.random() < bounce_prob
@@ -423,6 +431,7 @@ def simulate_clickstream(
             device=device,
             referrer=referrer,
             customer_id=customer_id,
+            participant_id=session_participant_id,
             session_id=session_id,
             session_start=session_start,
             month=month,

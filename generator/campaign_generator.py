@@ -197,6 +197,7 @@ def _sigmoid_response(
 
 def simulate_campaigns(
     config: PersonaConfig,
+    participant_id: str,
     n_months: int = 12,
     month: int = 1,
     random_seed: Optional[int] = None,
@@ -316,6 +317,7 @@ def simulate_campaigns(
             events.append(
                 CampaignEvent(
                     customer_id=customer_id,
+                    participant_id=participant_id,
                     campaign_id=campaign_id,
                     sent_ts=sent_ts,
                     campaign_type=campaign_type,

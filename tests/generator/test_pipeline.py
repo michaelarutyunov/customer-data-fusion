@@ -164,6 +164,35 @@ class TestCrossModalConsistency:
 
         assert trace_pids == psycho_pids
 
+    def test_clickstream_campaign_participant_id_matches_psychographic(
+        self, tmp_path: Path
+    ):
+        run_pipeline(
+            n=2, archetypes=["compensatory"], output_dir=tmp_path, skip_narratives=True
+        )
+
+        psycho_pids = {
+            json.loads(line)["participant_id"]
+            for line in (tmp_path / "psychographics.jsonl").read_text().splitlines()
+        }
+        # Non-anonymous clickstream events/summaries carry the participant id;
+        # anonymous sessions carry participant_id="" and are excluded here.
+        click_pids = {
+            rec["participant_id"]
+            for line in (tmp_path / "clickstream.jsonl").read_text().splitlines()
+            for rec in [json.loads(line)]
+            if rec["participant_id"]
+        }
+        camp_pids = {
+            json.loads(line)["participant_id"]
+            for line in (tmp_path / "campaigns.jsonl").read_text().splitlines()
+        }
+
+        # Both new modalities are individually attributable — same id set as
+        # psychographics (the canonical per-participant ordering).
+        assert click_pids == psycho_pids
+        assert camp_pids == psycho_pids
+
 
 # ---------------------------------------------------------------------------
 # JSONL format

@@ -400,6 +400,7 @@ def run_pipeline(
                     # --- Clickstream (event-stream: every month) ---
                     click_events, click_summaries = simulate_clickstream(
                         month_config,
+                        participant_id=participant_id,
                         month=month,
                         random_seed=seed + month,
                     )
@@ -417,6 +418,7 @@ def run_pipeline(
                     # --- Campaigns (event-stream: every month) ---
                     campaign_events = simulate_campaigns(
                         month_config,
+                        participant_id=participant_id,
                         n_months=n_months,
                         month=month,
                         random_seed=seed + month,

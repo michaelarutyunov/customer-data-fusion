@@ -81,6 +81,7 @@ class ClickstreamEvent:
     device: DeviceType = DeviceType.DESKTOP
     dwell_ms: float = 0.0
     month: int = 0
+    participant_id: str = ""  # individual consumer; "" for anonymous traffic
 
 
 @dataclass(frozen=True)
@@ -99,3 +100,4 @@ class SessionSummary:
     intent: SessionIntent
     device: DeviceType
     month: int = 0
+    participant_id: str = ""  # individual consumer; "" for anonymous traffic

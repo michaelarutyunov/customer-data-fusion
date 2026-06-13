@@ -46,3 +46,4 @@ class CampaignEvent:
     converted: bool = False
     unsub: bool = False
     month: int = 0
+    participant_id: str = ""  # individual consumer this campaign targeted
