@@ -4,15 +4,16 @@ Trace tokeniser — converts AcquisitionEvent sequences to padded tensors.
 Builds attribute_id and alternative_id vocabularies from traces.jsonl on first
 run and caches the vocab to ``data/synthetic/trace_vocab.json``.
 
-Token dim = 27 per event:
+Token dim = 31 per event:
   - attribute embedding lookup index (learned in model)  -> 16-dim
   - alternative embedding lookup index (learned in model) -> 8-dim
+  - event_type embedding lookup index (learned in model) -> 4-dim
   - timestamp_norm  -> 1
   - dwell_zscore    -> 1
   - is_reinspection -> 1
 
 CLS token is prepended at index 0 using a learned embedding (handled by the
-model, not the tokeniser — tokeniser reserves index 0 in both vocab dicts).
+model, not the tokeniser — tokeniser reserves index 0 in all vocab dicts).
 """
 
 from __future__ import annotations
@@ -24,10 +25,15 @@ import numpy as np
 import torch
 from torch import Tensor
 
-from schemas.trace import AcquisitionEvent, TrialRecord
+from schemas.trace import AcquisitionEvent, EventType, TrialRecord
 
 # Fixed token feature dimensionality
-TOKEN_DIM: int = 27
+TOKEN_DIM: int = 31
+
+# Fixed event_type vocabulary (5 EventType values; index 0 reserved for CLS).
+# CELL_HOVER=1, CELL_OPEN=2, COLUMN_ADD=3, SORT_APPLY=4, CHOICE=5
+EVENT_TYPE_VOCAB: dict[str, int] = {et.value: i + 1 for i, et in enumerate(EventType)}
+N_EVENT_TYPES: int = len(EVENT_TYPE_VOCAB) + 1  # +1 for CLS (index 0)
 
 # Maximum sequence length (covers 99th percentile of synthetic data)
 MAX_SEQ_LEN: int = 200
@@ -169,6 +175,15 @@ def tokenise_trial(
         offset += 1
         # Alternative embedding index
         token_data[i, offset] = float(alt_vocab.get(ev.alternative_id, 1))
+        offset += 1
+        # Event type embedding index (5 types + CLS placeholder).
+        # Handle both EventType enum and raw string (for legacy/test data).
+        event_type_val = (
+            ev.event_type.value
+            if hasattr(ev.event_type, "value")
+            else str(ev.event_type)
+        )
+        token_data[i, offset] = float(EVENT_TYPE_VOCAB.get(event_type_val, 1))
         offset += 1
         # timestamp_norm
         token_data[i, offset] = ev.timestamp_s / trial_duration

@@ -2,8 +2,8 @@
 Trace encoder model — Transformer sequence encoder for MouseLab acquisition traces.
 
 Architecture:
-    Input sequence:  [T x 27]
-        -> Token embedding (attribute/alternative learned embeddings + continuous features)
+    Input sequence:  [T x 31]
+        -> Token embedding (attribute/alternative/event_type learned embeddings + continuous features)
         -> Linear projection: [T x 64]
         -> + Positional encoding (learned, max_len=200)
         -> Transformer encoder: 4 heads, 3 layers, d_model=64, d_ff=256, dropout=0.1
@@ -26,7 +26,7 @@ from torch import Tensor
 
 from schemas import EMBEDDING_DIM
 
-from encoders.trace.tokeniser import MAX_SEQ_LEN
+from encoders.trace.tokeniser import MAX_SEQ_LEN, N_EVENT_TYPES
 
 # Model hyperparameters (from SPEC.md)
 D_MODEL: int = 64
@@ -38,6 +38,7 @@ DROPOUT: float = 0.1
 # Embedding dimensions per SPEC.md tokenisation
 ATTR_EMBED_DIM: int = 16
 ALT_EMBED_DIM: int = 8
+EVENT_TYPE_EMBED_DIM: int = 4
 
 # Number of continuous scalar features per token
 # timestamp_norm + dwell_zscore + is_reinspection = 3
@@ -62,12 +63,13 @@ class TraceEncoder(nn.Module):
     """
     Transformer encoder for MouseLab acquisition trace sequences.
 
-    Takes tokenised input of shape (B, S, 27) where:
+    Takes tokenised input of shape (B, S, 31) where:
       - token[:, 0] = attribute vocab index (int -> 16-dim embedding)
       - token[:, 1] = alternative vocab index (int -> 8-dim embedding)
-      - token[:, 2] = timestamp_norm (float)
-      - token[:, 3] = dwell_zscore (float)
-      - token[:, 4] = is_reinspection (float)
+      - token[:, 2] = event_type vocab index (int -> 4-dim embedding)
+      - token[:, 3] = timestamp_norm (float)
+      - token[:, 4] = dwell_zscore (float)
+      - token[:, 5] = is_reinspection (float)
 
     The first position (index 0) is the CLS token placeholder.  Its vocab
     indices are 0, which maps to a dedicated CLS embedding row.
@@ -77,6 +79,7 @@ class TraceEncoder(nn.Module):
         self,
         n_attributes: int = 9,  # 8 attrs + 1 for CLS/unseen
         n_alternatives: int = 8,  # 7 alts + 1 for CLS/unseen
+        n_event_types: int = N_EVENT_TYPES,  # 5 types + 1 for CLS/unseen
         d_model: int = D_MODEL,
         d_ff: int = D_FF,
         n_heads: int = N_HEADS,
@@ -92,11 +95,14 @@ class TraceEncoder(nn.Module):
         # Learned embeddings for discrete features
         self.attribute_embed = nn.Embedding(n_attributes, ATTR_EMBED_DIM)
         self.alternative_embed = nn.Embedding(n_alternatives, ALT_EMBED_DIM)
+        self.event_type_embed = nn.Embedding(n_event_types, EVENT_TYPE_EMBED_DIM)
 
         # Projection from token features to d_model
-        # ATTR_EMBED_DIM + ALT_EMBED_DIM + N_CONTINUOUS = 16 + 8 + 3 = 27
+        # ATTR_EMBED_DIM + ALT_EMBED_DIM + EVENT_TYPE_EMBED_DIM + N_CONTINUOUS
+        # = 16 + 8 + 4 + 3 = 31
         self.input_proj = nn.Linear(
-            ATTR_EMBED_DIM + ALT_EMBED_DIM + N_CONTINUOUS, d_model
+            ATTR_EMBED_DIM + ALT_EMBED_DIM + EVENT_TYPE_EMBED_DIM + N_CONTINUOUS,
+            d_model,
         )
 
         # Positional encoding
@@ -136,7 +142,7 @@ class TraceEncoder(nn.Module):
 
         Parameters
         ----------
-        tokens: (B, S, 27) — raw token features from tokeniser.
+        tokens: (B, S, 31) — raw token features from tokeniser.
 
         Returns
         -------
@@ -145,14 +151,18 @@ class TraceEncoder(nn.Module):
         # Extract discrete indices and continuous features
         attr_idx = tokens[:, :, 0].long()  # (B, S)
         alt_idx = tokens[:, :, 1].long()  # (B, S)
-        continuous = tokens[:, :, 2:5]  # (B, S, 3) — timestamp, dwell, reinspect
+        event_type_idx = tokens[:, :, 2].long()  # (B, S)
+        continuous = tokens[:, :, 3:6]  # (B, S, 3) — timestamp, dwell, reinspect
 
         # Lookup embeddings
         attr_emb = self.attribute_embed(attr_idx)  # (B, S, 16)
         alt_emb = self.alternative_embed(alt_idx)  # (B, S, 8)
+        event_type_emb = self.event_type_embed(event_type_idx)  # (B, S, 4)
 
         # Concatenate all features
-        combined = torch.cat([attr_emb, alt_emb, continuous], dim=-1)  # (B, S, 27)
+        combined = torch.cat(
+            [attr_emb, alt_emb, event_type_emb, continuous], dim=-1
+        )  # (B, S, 31)
 
         # Project to d_model
         return self.input_proj(combined)  # (B, S, d_model)
@@ -168,7 +178,7 @@ class TraceEncoder(nn.Module):
         Parameters
         ----------
         tokens:
-            FloatTensor (B, S, 27) — tokenised input from tokeniser.
+            FloatTensor (B, S, 31) — tokenised input from tokeniser.
         mask:
             BoolTensor (B, S) — True for real positions, False for padding.
             Converted to ``~mask`` for the ``src_key_padding_mask`` argument
