@@ -446,11 +446,11 @@ def nt_xent_fusion(
 def _apply_modality_dropout(
     batch_embs: torch.Tensor, p_dropout: float, device: str
 ) -> torch.Tensor:
-    """Apply independent per-modality dropout to a [B, 4, 128] embedding batch."""
-    B = batch_embs.shape[0]
-    masks = [torch.rand(B, 1, device=device) >= p_dropout for _ in range(4)]
+    """Apply independent per-modality dropout to a [B, M, 128] embedding batch."""
+    B, M, _ = batch_embs.shape
+    masks = [torch.rand(B, 1, device=device) >= p_dropout for _ in range(M)]
     result = batch_embs.clone()
-    for i in range(4):
+    for i in range(M):
         result[:, i] = result[:, i] * masks[i].float()
     return result
 
@@ -522,8 +522,10 @@ def train(
     train_indices = torch.tensor([participant_to_idx[pid] for pid in train_ids])  # type: ignore[reportPrivateImportUsage]
     val_indices = torch.tensor([participant_to_idx[pid] for pid in val_ids])  # type: ignore[reportPrivateImportUsage]
 
-    # Extract embeddings and labels
-    _MODALITIES = ["trace", "transaction", "text", "psychographic"]
+    # Extract embeddings and labels.
+    # Modalities derived from the embedding cache (supports 4 or 6 modalities).
+    _MODALITIES = [k for k in embeddings if k != "labels"]
+    n_modalities = len(_MODALITIES)
     train_embs = {mod: embeddings[mod][train_indices] for mod in _MODALITIES}
     train_labels = embeddings["labels"][train_indices]
 
@@ -533,7 +535,7 @@ def train(
     def make_dataset(embs_dict, labels):
         all_embs = torch.stack(
             [embs_dict[mod] for mod in _MODALITIES], dim=1
-        )  # [N, 4, 128]
+        )  # [N, M, 128]
         return TensorDataset(all_embs, labels)
 
     train_ds = make_dataset(train_embs, train_labels)
@@ -542,8 +544,8 @@ def train(
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
 
-    # Initialize model
-    model = LateFusionMetaLearner(phase=phase).to(device)
+    # Initialize model with the correct modality count
+    model = LateFusionMetaLearner(phase=phase, n_modalities=n_modalities).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
     criterion = nn.CrossEntropyLoss()
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -566,12 +568,12 @@ def train(
 
             # View 1: modality-dropout augmented fusion input
             v1 = _apply_modality_dropout(batch_embs, p_dropout, device)
-            norm_v1 = [F.normalize(v1[:, i], p=2, dim=-1) for i in range(4)]
-            fusion_v1 = torch.cat(norm_v1, dim=-1)  # [B, 512]
+            norm_v1 = [F.normalize(v1[:, i], p=2, dim=-1) for i in range(n_modalities)]
+            fusion_v1 = torch.cat(norm_v1, dim=-1)  # [B, M*128]
 
             # View 2: independent modality-dropout augmented fusion input
             v2 = _apply_modality_dropout(batch_embs, p_dropout, device)
-            norm_v2 = [F.normalize(v2[:, i], p=2, dim=-1) for i in range(4)]
+            norm_v2 = [F.normalize(v2[:, i], p=2, dim=-1) for i in range(n_modalities)]
             fusion_v2 = torch.cat(norm_v2, dim=-1)
 
             # CE loss on view 1 (archetype auxiliary head)
@@ -607,7 +609,8 @@ def train(
                 batch_labels = batch_labels.to(device)
 
                 norm_embs = [
-                    F.normalize(batch_embs[:, i], p=2, dim=-1) for i in range(4)
+                    F.normalize(batch_embs[:, i], p=2, dim=-1)
+                    for i in range(n_modalities)
                 ]
                 fusion_input = torch.cat(norm_embs, dim=-1)
 
