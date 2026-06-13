@@ -216,6 +216,14 @@ def simulate_campaigns(
     customer_id = config.persona_id
     z = config.latent
 
+    # Cap n_months to prevent runaway event generation (resource bound).
+    # 120 months = 10 years is a generous upper limit for any realistic simulation.
+    if n_months > 120:
+        raise ValueError(f"n_months={n_months} exceeds maximum of 120 (10 years)")
+    MAX_EVENTS = 10_000
+    if n_months < 1:
+        raise ValueError(f"n_months={n_months} must be >= 1")
+
     # Resolve archetype dispatch weights (fallback to uniform if unknown archetype)
     weights_dict = _DISPATCH_WEIGHTS.get(config.persona_id)
     if weights_dict is None:
@@ -320,6 +328,13 @@ def simulate_campaigns(
                     month=m,
                 )
             )
+
+            # Resource bound: stop if we exceed the event cap
+            if len(events) >= MAX_EVENTS:
+                break
+
+        if len(events) >= MAX_EVENTS:
+            break
 
     n_months_simulated = 0
     if events:

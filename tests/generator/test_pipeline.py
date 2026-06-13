@@ -55,14 +55,21 @@ class TestRunPipeline:
     def test_psychographics_count_equals_n(self, tmp_path: Path):
         n = 5
         counts = run_pipeline(n=n, output_dir=tmp_path, skip_narratives=True)
-        assert counts["psychographics"] == n
+        # Psychographics fielded at months 1 and 7 (snapshot modality) → 2 per participant
+        assert counts["psychographics"] == 2 * n
 
-    def test_trials_count_equals_n_times_n_trials(self, tmp_path: Path):
+    def test_trials_count_matches_coverage_subset(self, tmp_path: Path):
         n, n_trials = 4, 10
+        # All n participants in coverage subset (trace_coverage >= n)
         counts = run_pipeline(
-            n=n, n_trials=n_trials, output_dir=tmp_path, skip_narratives=True
+            n=n,
+            n_trials=n_trials,
+            output_dir=tmp_path,
+            skip_narratives=True,
+            trace_coverage=n,
         )
-        assert counts["trials"] == n * n_trials
+        # Traces fielded at months 1 and 2 → 2 fielding rounds per participant
+        assert counts["trials"] == n * n_trials * 2
 
     def test_traces_count_positive(self, tmp_path: Path):
         counts = run_pipeline(n=2, output_dir=tmp_path, skip_narratives=True)
@@ -107,6 +114,8 @@ class TestRunPipeline:
             "narratives",
             "narrative_failures",
             "participant_configs",
+            "clickstream",
+            "campaigns",
         }
 
 
@@ -175,7 +184,10 @@ class TestJsonlFormat:
 
     def test_psychographic_has_required_fields(self, tmp_path: Path):
         run_pipeline(n=1, output_dir=tmp_path, skip_narratives=True)
-        row = json.loads((tmp_path / "psychographics.jsonl").read_text())
+        # Psychographics now fielded at months 1 and 7 → multiple lines; read first
+        row = json.loads(
+            (tmp_path / "psychographics.jsonl").read_text().splitlines()[0]
+        )
         for field in [
             "participant_id",
             "persona_id",
@@ -278,7 +290,8 @@ class TestNarrativeResilience:
             counts = run_pipeline(n=3, output_dir=tmp_path)
 
         # All non-narrative modalities must be complete
-        assert counts["psychographics"] == 3
+        # Psychographics fielded at months 1 and 7 → 2 per participant
+        assert counts["psychographics"] == 2 * 3
         assert counts["traces"] > 0
         assert counts["transactions"] > 0
         # No narratives written — every call failed
@@ -312,8 +325,8 @@ class TestNarrativeResilience:
 
         # 2 of 3 narratives succeeded
         assert counts["narratives"] == 2
-        # Other modalities unaffected
-        assert counts["psychographics"] == 3
+        # Other modalities unaffected (psychographics at months 1 and 7 → 2n)
+        assert counts["psychographics"] == 2 * 3
 
     def test_narrative_failures_reported_in_counts(self, tmp_path: Path):
         """counts dict must include narrative_failures key with failure count."""

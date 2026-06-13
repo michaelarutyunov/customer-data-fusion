@@ -206,6 +206,30 @@ def sample_temporal_trajectory(
     return trajectory
 
 
+def get_drift_metadata(
+    config: PersonaConfig,
+    n_months: int = 12,
+    random_seed: Optional[int] = None,
+) -> tuple[bool, int | None]:
+    """Return ground-truth regime shift metadata for a participant's trajectory.
+
+    Replays the same RNG decisions as sample_temporal_trajectory to determine
+    whether this participant has an injected regime shift and at which month.
+    This is the authoritative drift label — superior to post-hoc threshold
+    detection on brand_lean deviations, which conflates regime shifts with
+    ordinary AR(1) stochastic drift.
+
+    Returns:
+        (has_regime_shift, shift_month) where shift_month is None if no shift.
+    """
+    rng = np.random.default_rng(random_seed or config.random_seed or 42)
+    has_regime_shift = rng.random() < _REGIME_SHIFT_PCT
+    shift_month: int | None = None
+    if has_regime_shift:
+        shift_month = int(rng.integers(6, 11))  # month 6-10
+    return has_regime_shift, shift_month
+
+
 def _with_month(config: PersonaConfig, z: LatentDeviation, month: int) -> PersonaConfig:
     """Create a copy of config with updated latent z and month index."""
     return replace(config, latent=z, month=month)
