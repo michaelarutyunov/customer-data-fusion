@@ -283,6 +283,13 @@ def load_persona_labels(path: Path = PSYCHOGRAPHICS_PATH) -> dict[str, int]:
             if pid in pid_to_label:
                 continue
             persona = rec["persona_id"]
+            if persona not in PERSONA_TO_IDX:
+                logger.warning(
+                    "Unknown persona_id %r for participant %r — skipping",
+                    persona,
+                    pid,
+                )
+                continue
             pid_to_label[pid] = PERSONA_TO_IDX[persona]
     return pid_to_label
 
