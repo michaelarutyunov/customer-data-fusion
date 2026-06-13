@@ -5,6 +5,12 @@ Produces AcquisitionEvent and TrialRecord sequences from a PersonaConfig.
 Calibrated to match empirical Payne Index and prop_cells_inspected ranges
 per archetype.
 
+Phase 2b additions:
+- Per-individual strategy mixture derived from LatentDeviation via softmax
+- Attentional weight divergence (dwell share rotated by attentional_bias)
+- EventType generation per AcquisitionEvent
+- Elimination-by-aspects (EBA) strategy
+
 Public API
 ----------
 simulate_session(config, category, n_trials) -> (events, trials)
@@ -12,6 +18,7 @@ simulate_session(config, category, n_trials) -> (events, trials)
 
 from __future__ import annotations
 
+import math
 import uuid
 from typing import Optional
 
@@ -26,7 +33,7 @@ from schemas.persona import (
     Strategy,
     StrategyParams,
 )
-from schemas.trace import AcquisitionEvent, TrialRecord
+from schemas.trace import AcquisitionEvent, EventType, TrialRecord
 
 log = structlog.get_logger(__name__)
 
@@ -34,6 +41,9 @@ log = structlog.get_logger(__name__)
 # E[lognormal(mu, sigma)] = exp(mu + sigma^2/2)
 # With sigma=0.5: E = exp(mu + 0.125)
 _DWELL_SIGMA = 0.5
+
+# ── dwell threshold for event_type ───────────────────────────────────────────
+_DEEP_DWELL_THRESHOLD_MS = 800.0
 
 # ── inspection-depth fraction targets ────────────────────────────────────────
 _DEPTH_FRACTION: dict[InspectionDepth, float] = {
@@ -62,6 +72,152 @@ _ATTRIBUTES = [
 ]
 _ALTERNATIVES = ["A", "B", "C", "D", "E", "F", "G"]
 
+# ── strategy mixture: logit coefficients for softmax ─────────────────────────
+# Order must match _MIXTURE_STRATEGIES below.
+# Compensatory favoured by thoroughness; lexicographic favoured by low thoroughness
+# and low search_orientation plus impulsivity; random favoured by impulsivity alone.
+_STRATEGY_LOGIT_COEFFS: list[tuple[float, float, float]] = [
+    # (thoroughness_coeff, search_orientation_coeff, impulsivity_coeff)
+    (2.0, 0.0, 0.0),  # compensatory
+    (-1.5, 1.0, 0.0),  # satisficing
+    (-2.0, -1.0, 1.5),  # lexicographic
+    (0.0, 0.0, 1.0),  # random
+]
+_MIXTURE_STRATEGIES: list[Strategy] = [
+    Strategy.COMPENSATORY,
+    Strategy.SATISFICING,
+    Strategy.LEXICOGRAPHIC,
+    Strategy.RANDOM,
+]
+
+# Mapping from non-mixture strategies to their closest mixture equivalent,
+# so the primary-strategy bonus can be applied correctly.
+_PRIMARY_TO_MIXTURE: dict[Strategy, Strategy] = {
+    Strategy.AFFECT_HEURISTIC: Strategy.LEXICOGRAPHIC,  # both strongly dimensional
+    Strategy.ADAPTIVE: Strategy.COMPENSATORY,  # uses compensatory for simple boards
+    Strategy.ELIMINATION_BY_ASPECTS: Strategy.SATISFICING,  # both sequential screening
+}
+
+# ── EBA parameters ───────────────────────────────────────────────────────────
+_EBA_ELIMINATION_THRESHOLD = 0.60  # fraction of alternatives eliminated per attribute
+
+
+# ── Strategy mixture from latent deviation ────────────────────────────────────
+
+
+# Base logit bonus for the archetype's primary strategy. At z=0 this gives the
+# primary strategy ~75% weight while allowing 25% individual variation from the
+# z-derived logits. The z logits can override this when |z| is large (>1.5).
+_PRIMARY_STRATEGY_LOGIT_BONUS = 5.0
+
+
+def _compute_strategy_mixture(
+    z: LatentDeviation,
+    primary_strategy: Strategy,
+    temperature: float = 1.0,
+) -> list[float]:
+    """Compute per-individual strategy mixture weights via softmax over z-derived logits.
+
+    The z-derived logit formula is:
+        logits = [
+            2.0 * z.thoroughness,                                                    # compensatory
+            -1.5 * z.thoroughness + 1.0 * z.search_orientation,                      # satisficing
+            -2.0 * z.thoroughness - 1.0 * z.search_orientation + 1.5 * z.impulsivity, # lexicographic
+            1.0 * z.impulsivity                                                       # random
+        ]
+    A bonus of 3.0 is added to the primary strategy's logit so that at
+    archetype-mean z (all zeros), the primary strategy dominates (~75% weight).
+    If primary_strategy is not in the mixture (e.g. AFFECT_HEURISTIC), it is
+    mapped to its closest mixture equivalent via _PRIMARY_TO_MIXTURE.
+    Positive thoroughness shifts toward compensatory; negative shifts toward
+    lexicographic/random. Search_orientation shifts toward satisficing.
+    Impulsivity shifts toward lexicographic/random.
+    """
+    # Map non-mixture strategies to their closest mixture equivalent
+    mixture_anchor = _PRIMARY_TO_MIXTURE.get(primary_strategy, primary_strategy)
+
+    z_axes = (z.thoroughness, z.search_orientation, z.impulsivity)
+    logits: list[float] = []
+    for idx, (t_coeff, s_coeff, i_coeff) in enumerate(_STRATEGY_LOGIT_COEFFS):
+        logit = t_coeff * z_axes[0] + s_coeff * z_axes[1] + i_coeff * z_axes[2]
+        # Add bonus to the primary strategy so it dominates at archetype-mean z
+        if _MIXTURE_STRATEGIES[idx] == mixture_anchor:
+            logit += _PRIMARY_STRATEGY_LOGIT_BONUS
+        logits.append(logit)
+
+    # Softmax with temperature
+    scaled = [logit / temperature for logit in logits]
+    max_scaled = max(scaled)
+    exp_vals = [math.exp(s - max_scaled) for s in scaled]
+    total = sum(exp_vals)
+    return [e / total for e in exp_vals]
+
+
+def _sample_strategy_from_mixture(
+    rng: np.random.Generator, mixture: list[float]
+) -> Strategy:
+    """Draw a strategy from the mixture distribution."""
+    idx = int(rng.choice(len(mixture), p=mixture))
+    return _MIXTURE_STRATEGIES[idx]
+
+
+# ── Attentional weight divergence ────────────────────────────────────────────
+
+
+def _compute_attentional_dwell_weights(
+    attribute_weights: dict[str, float] | None,
+    attrs: list[str],
+    attentional_bias: float,
+) -> dict[str, float]:
+    """Compute dwell-share per attribute, rotated away from choice preference weights.
+
+    When attentional_bias=0, dwell shares match attribute_weights exactly.
+    When attentional_bias>0, dwell on price is reduced by ``attentional_bias * 0.3``
+    and the removed share is redistributed proportionally to other attributes.
+    When attentional_bias<0, price dwell increases symmetrically.
+
+    If attribute_weights is None, returns uniform weights (no rotation applied).
+    """
+    n = len(attrs)
+    if attribute_weights is None:
+        return {a: 1.0 / n for a in attrs}
+
+    # Normalise attribute_weights to only include attrs in the current board
+    raw = {a: attribute_weights.get(a, 1.0 / n) for a in attrs}
+    total = sum(raw.values())
+    base_shares = {a: v / total for a, v in raw.items()}
+
+    if abs(attentional_bias) < 1e-9:
+        return base_shares
+
+    # Rotate price share
+    shifted = dict(base_shares)
+    if "price" in shifted:
+        price_shift = attentional_bias * 0.3
+        shifted["price"] = max(0.0, shifted["price"] - price_shift)
+
+    # Redistribute the deficit/surplus proportionally to other attributes
+    others = [a for a in attrs if a != "price"]
+    other_total = sum(shifted[a] for a in others)
+    current_total = sum(shifted.values())
+    if current_total > 0 and other_total > 0:
+        # Scale others so total sums to 1.0
+        scale = (1.0 - shifted["price"]) / other_total if other_total > 0 else 1.0
+        for a in others:
+            shifted[a] = shifted[a] * scale
+
+    # Final normalisation (float safety)
+    total_shifted = sum(shifted.values())
+    if total_shifted > 0:
+        shifted = {a: v / total_shifted for a, v in shifted.items()}
+    else:
+        shifted = {a: 1.0 / n for a in attrs}
+
+    return shifted
+
+
+# ── Dwell time with attentional modulation ────────────────────────────────────
+
 
 def _dwell_mu_for(config: PersonaConfig) -> float:
     """Dwell mean (log-normal mu) as a continuous function of involvement and z."""
@@ -76,10 +232,36 @@ def _dwell_mu_for(config: PersonaConfig) -> float:
     return float(mu_base + 0.4 * _s * z.thoroughness - 0.3 * _s * z.impulsivity)
 
 
+def _sample_dwell_ms(
+    rng: np.random.Generator,
+    base_mu: float,
+    attr: str,
+    dwell_weights: dict[str, float],
+    uniform_weight: float,
+) -> float:
+    """Sample dwell time for an attribute, modulated by dwell weight share.
+
+    Attributes with higher dwell weight share get longer dwells on average.
+    The modulation is multiplicative on the log-normal mu: higher share -> longer.
+    """
+    share = dwell_weights.get(attr, uniform_weight)
+    # Modulate mu: shift up/down proportionally to how much share exceeds uniform
+    # share > uniform => more attention => longer dwell
+    mu_shift = 0.3 * (share - uniform_weight)
+    dwell_ms = float(rng.lognormal(mean=base_mu + mu_shift, sigma=_DWELL_SIGMA))
+    return max(10.0, dwell_ms)  # floor at 10ms
+
+
+# ── Depth helpers ─────────────────────────────────────────────────────────────
+
+
 def _reduce_depth(depth: InspectionDepth) -> InspectionDepth:
     """Return one level shallower (fatigue effect)."""
     idx = _DEPTH_ORDER.index(depth)
     return _DEPTH_ORDER[max(0, idx - 1)]
+
+
+# ── Payne Index ───────────────────────────────────────────────────────────────
 
 
 def _compute_payne_index(events: list[AcquisitionEvent]) -> float:
@@ -125,6 +307,9 @@ def _compute_payne_index(events: list[AcquisitionEvent]) -> float:
     if total == 0:
         return 0.0
     return (holistic - dimensional) / total
+
+
+# ── Sequence builders ─────────────────────────────────────────────────────────
 
 
 def _build_mixed_sequence(
@@ -256,8 +441,8 @@ def _simulate_affect_heuristic(
     Target PI: -0.7 to -0.9 → p_dimensional = 0.90
     Target prop_cells: 0.10-0.20 (SHALLOW depth handles this via n_target).
     """
-    # p_dimensional = 0.845 → calibrated to produce median PI in [-0.9, -0.7]
-    return _build_mixed_sequence(rng, alts, attrs, n_target, p_dimensional=0.845)
+    # p_dimensional = 0.80 → calibrated to produce median PI in [-0.9, -0.7]
+    return _build_mixed_sequence(rng, alts, attrs, n_target, p_dimensional=0.80)
 
 
 def _simulate_random(
@@ -289,6 +474,74 @@ def _simulate_adaptive(
     if complexity > 20:
         return _simulate_satisficing(rng, alts, attrs, params, n_target)
     return _simulate_compensatory(rng, alts, attrs, params, n_target)
+
+
+def _simulate_elimination_by_aspects(
+    rng: np.random.Generator,
+    alts: list[str],
+    attrs: list[str],
+    params: StrategyParams,
+    n_target: int,
+) -> list[tuple[str, str]]:
+    """
+    Elimination-by-aspects (EBA): inspect attributes sequentially by weight,
+    eliminating alternatives below threshold on each attribute.
+
+    Process:
+    1. Sort attributes by weight (descending). Use attribute_weights if available,
+       otherwise use attr order as proxy.
+    2. For each attribute: inspect remaining alternatives dimensionally.
+    3. Eliminate a fraction of alternatives below threshold.
+    4. Repeat until one alternative remains or attributes exhausted.
+
+    Target PI: -0.4 to -0.6 (dimensional search within each attribute).
+    Target prop_cells: 0.25-0.45.
+    """
+    # Determine attribute order by weight (descending)
+    weights = params.attribute_weights
+    if weights:
+        attr_order = sorted(
+            attrs,
+            key=lambda a: weights.get(a, 0.1),
+            reverse=True,
+        )
+    else:
+        attr_order = list(attrs)
+
+    remaining_alts = list(alts)
+    sequence: list[tuple[str, str]] = []
+
+    for attr in attr_order:
+        if len(remaining_alts) <= 1:
+            break
+
+        # Inspect all remaining alternatives on this attribute (dimensional scan)
+        alt_order = list(remaining_alts)
+        rng.shuffle(alt_order)
+        for alt in alt_order:
+            sequence.append((alt, attr))
+
+        # Eliminate a fraction of alternatives (those with worst values)
+        # Use stochastic elimination to avoid deterministic output
+        n_to_eliminate = max(
+            0,
+            int(len(remaining_alts) * _EBA_ELIMINATION_THRESHOLD)
+            + (1 if rng.random() < 0.3 else 0),
+        )
+        if n_to_eliminate > 0 and len(remaining_alts) > n_to_eliminate + 1:
+            # Randomly eliminate (simulating unknown value distribution)
+            rng.shuffle(remaining_alts)
+            remaining_alts = remaining_alts[n_to_eliminate:]
+
+    # If we have remaining budget from n_target, add a few more inspections
+    if len(sequence) < n_target and remaining_alts:
+        extra = n_target - len(sequence)
+        for _ in range(extra):
+            alt = str(rng.choice(remaining_alts))
+            attr = str(rng.choice(attr_order))
+            sequence.append((alt, attr))
+
+    return sequence
 
 
 def _generate_sequence(
@@ -327,8 +580,108 @@ def _generate_sequence(
         return _simulate_affect_heuristic(rng, alts, attrs, params, n_target)
     elif strategy == Strategy.ADAPTIVE:
         return _simulate_adaptive(rng, alts, attrs, params, n_target)
+    elif strategy == Strategy.ELIMINATION_BY_ASPECTS:
+        return _simulate_elimination_by_aspects(rng, alts, attrs, params, n_target)
     else:
         return _simulate_random(rng, alts, attrs, n_target)
+
+
+# ── EventType assignment ──────────────────────────────────────────────────────
+
+
+def _assign_event_types(
+    events: list[AcquisitionEvent],
+    strategy: Strategy,
+) -> list[AcquisitionEvent]:
+    """Assign EventType to each AcquisitionEvent based on dwell and transition context.
+
+    Rules:
+    - CELL_HOVER: shallow inspection (dwell < 800ms)
+    - CELL_OPEN: deep inspection (dwell >= 800ms)
+    - COLUMN_ADD: first inspection in a new attribute column (different attr from previous)
+    - SORT_APPLY: strategy-driven attribute switch mid-sequence (compensatory only)
+    - CHOICE: final selection event (appended as last event in trial)
+
+    Distribution is conditioned on strategy:
+    - Lexicographic: mostly CELL_HOVER + CHOICE (shallow, fast scans)
+    - Compensatory: CELL_OPEN + COLUMN_ADD + SORT_APPLY (deep, broad exploration)
+    - Satisficing: mix of CELL_HOVER and CELL_OPEN
+    - Affect heuristic: mostly CELL_HOVER (shallow)
+    - EBA: mix of CELL_HOVER and CELL_OPEN with COLUMN_ADD between attribute blocks
+    """
+    if not events:
+        return events
+
+    typed_events: list[AcquisitionEvent] = []
+    seen_attrs: set[str] = set()
+    prev_attr: str | None = None
+
+    for i, event in enumerate(events):
+        is_final = i == len(events) - 1
+
+        if is_final:
+            # Last event before choice: treat as CHOICE indicator
+            # We keep the actual event but change type to CHOICE
+            typed = AcquisitionEvent(
+                participant_id=event.participant_id,
+                trial_id=event.trial_id,
+                event_index=event.event_index,
+                alternative_id=event.alternative_id,
+                attribute_id=event.attribute_id,
+                timestamp_s=event.timestamp_s,
+                dwell_ms=event.dwell_ms,
+                is_reinspection=event.is_reinspection,
+                event_type=EventType.CHOICE,
+            )
+            typed_events.append(typed)
+            continue
+
+        # Determine base type from dwell
+        if event.dwell_ms < _DEEP_DWELL_THRESHOLD_MS:
+            base_type = EventType.CELL_HOVER
+        else:
+            base_type = EventType.CELL_OPEN
+
+        # Check for COLUMN_ADD: first time we see a new attribute
+        attr = event.attribute_id
+        is_new_attr = attr not in seen_attrs
+        if is_new_attr:
+            seen_attrs.add(attr)
+
+        # Check for SORT_APPLY: strategy-driven attribute switch
+        # (compensatory switching to a new attribute mid-sequence, not the first time)
+        is_sort_apply = (
+            strategy == Strategy.COMPENSATORY
+            and prev_attr is not None
+            and attr != prev_attr
+            and not is_new_attr  # not the first visit to this attribute
+        )
+
+        if is_sort_apply:
+            event_type = EventType.SORT_APPLY
+        elif is_new_attr and prev_attr is not None and i > 0:
+            event_type = EventType.COLUMN_ADD
+        else:
+            event_type = base_type
+
+        typed = AcquisitionEvent(
+            participant_id=event.participant_id,
+            trial_id=event.trial_id,
+            event_index=event.event_index,
+            alternative_id=event.alternative_id,
+            attribute_id=event.attribute_id,
+            timestamp_s=event.timestamp_s,
+            dwell_ms=event.dwell_ms,
+            is_reinspection=event.is_reinspection,
+            event_type=event_type,
+        )
+        typed_events.append(typed)
+        prev_attr = attr
+
+    return typed_events
+
+
+# ── Main simulation entry point ──────────────────────────────────────────────
 
 
 def simulate_session(
@@ -375,6 +728,10 @@ def simulate_session(
     if z is None:
         z = LatentDeviation()
 
+    # Compute per-individual strategy mixture from latent deviation,
+    # anchored to the archetype's primary strategy
+    mixture = _compute_strategy_mixture(z, primary_strategy)
+
     all_events: list[AcquisitionEvent] = []
     all_trials: list[TrialRecord] = []
 
@@ -393,15 +750,27 @@ def simulate_session(
         # Fatigue: trials 15+ -> shallower
         effective_depth = _reduce_depth(base_depth) if trial_idx >= 15 else base_depth
 
-        # Strategy lapse modulated by impulsivity — scaled by GENERATOR_SPREAD
+        # Per-trial strategy drawn from individual mixture.
+        # When the drawn mixture strategy maps back to the primary (via _PRIMARY_TO_MIXTURE),
+        # use the actual primary strategy for simulation. This ensures AFFECT_HEURISTIC
+        # stays affect_heuristic, ADAPTIVE stays adaptive, etc.
+        mixture_draw = _sample_strategy_from_mixture(rng, mixture)
+        if (
+            primary_strategy not in _MIXTURE_STRATEGIES
+            and _PRIMARY_TO_MIXTURE.get(primary_strategy) == mixture_draw
+        ):
+            trial_strategy = primary_strategy
+        else:
+            trial_strategy = mixture_draw
+
+        # Strategy lapse modulated by impulsivity — scaled by GENERATOR_SPREAD.
+        # This overrides the mixture draw on impulse-heavy participants.
         impulsivity_boost = 0.12 * GENERATOR_SPREAD * max(0.0, z.impulsivity)
         effective_lapse_prob = float(
             np.clip(strategy_params.p_strategy_lapse + impulsivity_boost, 0.0, 0.8)
         )
         if rng.random() < effective_lapse_prob:
             trial_strategy = Strategy.RANDOM
-        else:
-            trial_strategy = primary_strategy
 
         # Generate raw (alt, attr) sequence
         raw_sequence = _generate_sequence(
@@ -423,6 +792,14 @@ def simulate_session(
                 reinspect_alt = str(rng.choice(alts))
                 raw_sequence.append((reinspect_alt, brand_attr))
 
+        # Compute attentional dwell weights for this trial's attribute set
+        trial_dwell_weights = _compute_attentional_dwell_weights(
+            strategy_params.attribute_weights,
+            attrs,
+            z.attentional_bias,
+        )
+        uniform_weight = 1.0 / len(attrs)
+
         # Build AcquisitionEvent objects
         seen_cells: set[tuple[str, str]] = set()
         timestamp_s = 0.0
@@ -434,7 +811,9 @@ def simulate_session(
             if not is_reinspection:
                 seen_cells.add(cell)
 
-            dwell_ms = float(rng.lognormal(mean=dwell_mu, sigma=_DWELL_SIGMA))
+            dwell_ms = _sample_dwell_ms(
+                rng, dwell_mu, attr_id, trial_dwell_weights, uniform_weight
+            )
 
             event = AcquisitionEvent(
                 participant_id=participant_id,
@@ -448,6 +827,9 @@ def simulate_session(
             )
             trial_events.append(event)
             timestamp_s += dwell_ms / 1000.0
+
+        # Assign event types based on dwell and transition context
+        trial_events = _assign_event_types(trial_events, trial_strategy)
 
         n_total = len(trial_events)
         n_cells = n_alts * n_attrs
