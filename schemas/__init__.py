@@ -27,6 +27,16 @@ from schemas.transaction import (
 )
 from schemas.text import PersonaNarrative
 from schemas.psychographic import PsychographicVector
+from schemas.clickstream import (
+    ClickstreamEvent,
+    ClickstreamEventType,
+    SessionSummary,
+    SessionIntent,
+    PageType,
+    ReferrerType,
+    DeviceType,
+)
+from schemas.campaign import CampaignEvent, CampaignType
 
 # Output dimension for all modality encoders — must match fusion meta-learner input.
 # Changing this requires retraining all encoders and the fusion layer.
@@ -94,4 +104,15 @@ __all__ = [
     "PersonaNarrative",
     # Psychographic
     "PsychographicVector",
+    # Clickstream
+    "ClickstreamEvent",
+    "ClickstreamEventType",
+    "SessionSummary",
+    "SessionIntent",
+    "PageType",
+    "ReferrerType",
+    "DeviceType",
+    # Campaign
+    "CampaignEvent",
+    "CampaignType",
 ]
