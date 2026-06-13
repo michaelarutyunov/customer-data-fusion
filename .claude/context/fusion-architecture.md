@@ -2,14 +2,15 @@
 
 > Tier 3 context document — see `codified-context-principles.md` for governance.
 > Authoritative spec: `fusion/SPEC.md`. This document explains intent and rationale.
+> Updated: schema-update epic (2026-06-13) — 6-modality fusion, learned MISSING embedding, variable n_modalities.
 
 ---
 
 ## What the Fusion Layer Does
 
-The fusion layer takes four independent per-participant embeddings (one per modality) and combines them into a single **CDT embedding** — the Consumer Digital Twin's compressed behavioural representation. It is the only place in the architecture where cross-modal information interacts.
+The fusion layer takes independent per-participant embeddings (one per modality) and combines them into a single **CDT embedding** — the Consumer Digital Twin's compressed behavioural representation. It is the only place in the architecture where cross-modal information interacts.
 
-Each modality encoder produces `[B, 128]`. The four are concatenated to `[B, 512]`, then a shallow MLP compresses back to `[B, 128]`. The classification head (`[B, 7]`) is a training proxy — the 128-dim hidden state is the actual output.
+Each modality encoder produces `[B, 128]`. With the schema-update epic, the modality count is **6** (trace, transaction, text, psychographic, clickstream, campaign), so the concatenation is `[B, 768]` → shallow MLP → `[B, 128]`. The `n_modalities` parameter is configurable; `train.py` derives it from the embedding cache, so the same code handles 4 or 6 modalities. The classification head (`[B, 7]`) is a training proxy — the 128-dim hidden state is the actual output.
 
 ---
 
@@ -30,19 +31,21 @@ Early fusion (fusing at the feature level, e.g. trace + transaction token stream
 Three reasons:
 
 1. **Parity with individual encoder outputs**: Each modality encoder already produces 128-dim embeddings. Keeping the CDT embedding at 128-dim allows direct comparison — UMAP plots, cosine similarity, and probe accuracy can be computed identically on single-modality and fused embeddings.
-2. **Information compression from 512**: The MLP's job is to compress 4 × 128 correlated signals (all derived from the same 7-archetype generative process) into a representation that discards inter-modality redundancy and retains discriminative signal.
+2. **Information compression from 768**: The MLP's job is to compress 6 × 128 correlated signals (all derived from the same 7-archetype generative process) into a representation that discards inter-modality redundancy and retains discriminative signal.
 3. **`schemas.EMBEDDING_DIM = 128`**: This constant governs all encoder output dims. Keeping fusion output at the same dim means the fusion layer is a drop-in replacement for any single encoder in downstream evaluation code.
 
 ---
 
-## Modality Dropout
+## Modality Dropout + MISSING Embedding
 
 Each modality is zeroed out independently with p=0.2 during training. This serves two purposes:
 
-1. **Missing-data robustness**: Real CDT deployments may not have all four modalities for every consumer. A fusion layer trained without dropout would produce garbage embeddings when a modality is absent.
+1. **Missing-data robustness**: Real CDT deployments may not have all modalities for every consumer. A fusion layer trained without dropout would produce garbage embeddings when a modality is absent.
 2. **Preventing co-adaptation**: Without dropout, the MLP can learn to rely entirely on the strongest modality (trace, 95% probe accuracy) and ignore the weaker ones. Dropout forces the model to maintain utility from every modality subset.
 
-At inference, all four modalities are always active. If a modality is genuinely absent for a participant, zero out its slice — the model handles this because it trained on zeroed inputs.
+**Learned MISSING embedding (schema-update epic):** For *natural* missingness — customers outside the trace coverage subset (250/1000 have traces) — the fusion layer now holds a trainable `missing_embedding` parameter (one `[per_modality_dim]` vector per slot). `apply_missing_mask()` replaces absent modality outputs with the MISSING vector before concatenation, rather than zero-filling. This is distinct from training-time dropout: dropout zeros random slots for augmentation; MISSING handles structurally absent modalities with a learned signal.
+
+At inference, all modalities are active unless genuinely absent (partial coverage). The MISSING embedding handles that case.
 
 ---
 
@@ -70,7 +73,7 @@ Phase 2a encoder probe results (val split, 201 participants):
 
 Text and psychographic encoders are near-sufficient statistics for the latent `PersonaConfig` — 100% accuracy is expected given the generative design (psychographics are a near-direct transcription of config params; narratives are LLM realisations of config params). Fusion will not exceed 100%. Do not use "beats best single modality" as an acceptance criterion.
 
-If fusion accuracy is lower than 85%, investigate ablation deltas to identify which modality is degrading the result. If all ablation deltas are near zero and accuracy is ≥85%, the modalities are encoding correlated information — this is a finding to report, not a failure (see Phase 2a fix post-mortem R7).
+If fusion accuracy is lower than 85%, investigate ablation deltas to identify which modality is degrading the result. If all ablation deltas are near zero and accuracy is ≥85%, the modalities are encoding correlated information — this is a finding to report, not a failure (see `docs/post-mortems/phase2a-fix-postmortem.md` R7).
 
 ## Multi-Task Training Objective (v0.2 — NT-Xent + CE)
 

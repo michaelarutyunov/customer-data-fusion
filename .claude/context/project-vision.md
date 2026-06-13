@@ -1,6 +1,8 @@
 # Project Vision
 
-## Current Version: 0.1 (prototype complete)
+## Current Version: 0.2 (modality expansion complete — pending Phase 4b retrain)
+
+> **schema-update epic (2026-06-13):** Expanded from 4 to 6 modalities, added temporal dynamics, attentional-weight divergence, and temporal evaluation. See `.claude/context/modality-expansion.md` for the full plan and pinned design decisions.
 
 ## What This Is
 
@@ -35,6 +37,22 @@ Validation: strategy recovery, individual identity, geometry, counterfactual res
 | PersonaConfig regression (fused R²) | ≥5/7 params ≥ 0.70 | **7/7 params ≥ 0.79** | ✅ PASS |
 
 Individual encoders fall below the 65–80% per-modality floor because the NT-Xent contrastive objective competes with CE classification — the multi-task trade-off is expected and accepted. Fused recovery remains 100%.
+
+### v0.2 modality expansion (schema-update epic)
+
+| Dimension | v0.1 (prototype) | v0.2 (modality expansion) |
+|---|---|---|
+| Modalities | 4 (trace, transaction, text, psychographic) | 6 (+ clickstream, campaign) |
+| Temporal dynamics | None (static `z`) | AR(1) drift over 12 months on loyalty/churn + attentional_bias |
+| Latent axes | 5 | 7 (added `search_orientation`, `attentional_bias`) |
+| Process/preference independence | Coupled | `attentional_bias` creates non-redundancy |
+| Drift labels | None | Ground-truth regime-shift metadata (~6–12% of cohort) |
+| Trace coverage | All participants | 250/1000 (partial coverage; MISSING embedding) |
+| Evaluation split | Random participant | Temporal (months 1–8 train, 9–12 eval) |
+
+The expansion addresses two prototype gaps: (1) no temporal dynamics made drift detection impossible, and (2) process traces were informationally redundant (dwell attention matched choice weights). The `attentional_bias` axis is the key fix — it rotates dwell shares away from preference weights, so the trace modality now carries information that preferences alone cannot recover.
+
+**Status:** Code infrastructure complete (Phases 1–4a + temporal split). Phase 4b (full retrain with 6 modalities) pending — requires new encoder train.py files + training execution.
 
 ## What We Proved
 
@@ -104,25 +122,6 @@ Linear(128, 7) → Dropout(0.1)               ← archetype classification
 ```
 
 The architecture is modular: encoders are swappable, early fusion blocks can replace late fusion for specific modality pairs, and the meta-learner can be upgraded to attention-based combination without touching encoders.
-
-## Counterfactual Capabilities
-
-Two complementary counterfactual approaches are implemented:
-
-### Option A: Archetype-level redistribution
-
-Applies redistribution rules derived from `personas.yaml` archetype parameters to predict how each archetype would shift choices under market changes. Three built-in scenarios:
-1. **price_increase_20pct** — uniform 20% price rise
-2. **new_entrant** — new option with best-in-class quality, mid-price, unknown brand
-3. **brand_removal** — the archetype's preferred brand is withdrawn
-
-Fast: operates on existing embeddings without re-running the generator.
-
-### Option B: Individual-level simulation
-
-Re-runs the generator with a modified `PersonaConfig` for a specific participant (e.g., `{"price_sensitivity": 0.99}`), re-encodes through frozen encoders and fusion model, and measures the cosine distance shift in the CDT embedding vs. baseline. Meaningful shift threshold: 0.27 (2× intra-archetype cosine distance SD).
-
-This answers questions like: "If this specific consumer became more price-sensitive, how would their behaviour change?"
 
 ## What This Is Not
 
