@@ -113,6 +113,54 @@ _DWELL_SIGMA = 0.8  # log-normal sigma
 _T = TypeVar("_T")
 
 
+# Archetype-keyed session-intent priors (BROWSE / RESEARCH / BUY). Grounded in
+# persona-archetypes.md decision styles: distinct distributions per archetype
+# give the clickstream encoder a learnable archetype signal via the
+# intent-driven transition matrices (_BASE_TRANSITIONS[intent]).
+_INTENT_WEIGHTS: dict[str, dict[SessionIntent, float]] = {
+    "price_lex": {
+        SessionIntent.BROWSE: 0.30,
+        SessionIntent.RESEARCH: 0.55,
+        SessionIntent.BUY: 0.15,
+    },
+    "quality_lex": {
+        SessionIntent.BROWSE: 0.30,
+        SessionIntent.RESEARCH: 0.50,
+        SessionIntent.BUY: 0.20,
+    },
+    "compensatory": {
+        SessionIntent.BROWSE: 0.20,
+        SessionIntent.RESEARCH: 0.60,
+        SessionIntent.BUY: 0.20,
+    },
+    "satisficer": {
+        SessionIntent.BROWSE: 0.45,
+        SessionIntent.RESEARCH: 0.35,
+        SessionIntent.BUY: 0.20,
+    },
+    "brand_affect": {
+        SessionIntent.BROWSE: 0.40,
+        SessionIntent.RESEARCH: 0.20,
+        SessionIntent.BUY: 0.40,
+    },
+    "low_involve": {
+        SessionIntent.BROWSE: 0.65,
+        SessionIntent.RESEARCH: 0.20,
+        SessionIntent.BUY: 0.15,
+    },
+    "adaptive": {
+        SessionIntent.BROWSE: 0.40,
+        SessionIntent.RESEARCH: 0.40,
+        SessionIntent.BUY: 0.20,
+    },
+}
+_DEFAULT_INTENT_WEIGHTS: dict[SessionIntent, float] = {
+    SessionIntent.BROWSE: 0.50,
+    SessionIntent.RESEARCH: 0.30,
+    SessionIntent.BUY: 0.20,
+}
+
+
 def _project_involvement(z: Optional[LatentDeviation]) -> float:
     """Project z onto involvement_score in [0, 1]."""
     if z is None:
@@ -404,7 +452,7 @@ def simulate_clickstream(
         is_bounce = rng.random() < bounce_prob
 
         # Sample session intent
-        intent = _sample_intent(rng)
+        intent = _sample_intent(rng, config.persona_id)
 
         # Sample device and referrer
         device = _sample_enum(rng, _DEVICE_WEIGHTS)
@@ -455,12 +503,15 @@ def simulate_clickstream(
     return all_events, all_summaries
 
 
-def _sample_intent(rng: np.random.Generator) -> SessionIntent:
-    """Sample session intent: BROWSE 50%, RESEARCH 30%, BUY 20%."""
-    r = rng.random()
-    if r < 0.50:
-        return SessionIntent.BROWSE
-    elif r < 0.80:
-        return SessionIntent.RESEARCH
-    else:
-        return SessionIntent.BUY
+def _sample_intent(
+    rng: np.random.Generator, persona_id: Optional[str] = None
+) -> SessionIntent:
+    """Sample session intent, archetype-keyed when ``persona_id`` is known.
+
+    Distinct per-archetype BROWSE/RESEARCH/BUY distributions (see
+    ``_INTENT_WEIGHTS``) give the clickstream encoder a learnable archetype
+    signal via the intent-driven transition matrices. Unknown archetypes and
+    anonymous sessions fall back to the uniform prior below.
+    """
+    weights = _INTENT_WEIGHTS.get(persona_id or "", _DEFAULT_INTENT_WEIGHTS)
+    return _sample_enum(rng, weights)
