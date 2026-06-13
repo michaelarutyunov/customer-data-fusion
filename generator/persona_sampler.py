@@ -6,6 +6,7 @@ stochastic noise around the archetype base parameters.
 
 Public API:
     sample_persona(archetype_id, random_seed) -> PersonaConfig
+    sample_temporal_trajectory(config, n_months, random_seed) -> list[PersonaConfig]
     list_archetype_ids() -> list[str]
 """
 
@@ -13,6 +14,7 @@ from __future__ import annotations
 
 import math
 import os
+from dataclasses import replace
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
@@ -83,13 +85,15 @@ def sample_persona(
     rng = np.random.default_rng(random_seed)
     raw = archetypes[archetype_id]
 
-    z_arr = rng.standard_normal(5)
+    z_arr = rng.standard_normal(7)
     z = LatentDeviation(
         price_lean=float(z_arr[0]),
         brand_lean=float(z_arr[1]),
         thoroughness=float(z_arr[2]),
         impulsivity=float(z_arr[3]),
-        openness=float(z_arr[4]),
+        search_orientation=float(z_arr[4]),
+        attentional_bias=float(z_arr[5]),
+        openness=float(z_arr[6]),
     )
 
     strategy = _build_strategy(raw["strategy"], rng)
@@ -114,6 +118,97 @@ def sample_persona(
         strategy=strategy.primary_strategy.value,
     )
     return config
+
+
+# ---------------------------------------------------------------------------
+# Temporal z evolution — AR(1) drift over simulated months
+# ---------------------------------------------------------------------------
+
+# Drift applied only to loyalty/churn dimensions and attentional_bias.
+# thoroughness, impulsivity, openness, search_orientation are stable traits.
+_DRIFT_AXES = {0, 1, 5}  # price_lean, brand_lean, attentional_bias indices
+
+# Default AR(1) parameters (configurable via env vars)
+_AR1_ALPHA: float = float(os.environ.get("AR1_ALPHA", "0.85"))  # persistence
+_AR1_SIGMA: float = float(os.environ.get("AR1_SIGMA", "0.15"))  # drift noise
+_REGIME_SHIFT_PCT: float = float(
+    os.environ.get("REGIME_SHIFT_PCT", "0.12")
+)  # fraction of cohort
+
+
+def sample_temporal_trajectory(
+    config: PersonaConfig,
+    n_months: int = 12,
+    random_seed: Optional[int] = None,
+) -> list[PersonaConfig]:
+    """Generate a month-by-month trajectory of PersonaConfig snapshots.
+
+    Applies AR(1) drift to the loyalty/churn dimensions (price_lean,
+    brand_lean) and attentional_bias. Stable traits (thoroughness,
+    impulsivity, openness, search_orientation) remain fixed.
+
+    For ~12% of participants (controlled by _REGIME_SHIFT_PCT), a regime
+    shift is injected at a random month (6-10): a sudden large negative
+    shock to brand_lean (loyalty decay) or shift in attentional_bias.
+
+    Returns a list of PersonaConfig with month=0..n_months, where month 0
+    is the original config (baseline). Generators should use month 1..n_months.
+    """
+    rng = np.random.default_rng(random_seed or config.random_seed or 42)
+    z0 = config.latent or LatentDeviation()
+    z_arr = list(z0.as_tuple())  # 7 elements
+
+    # Decide if this participant gets a regime shift
+    has_regime_shift = rng.random() < _REGIME_SHIFT_PCT
+    shift_month: int = 0
+    if has_regime_shift:
+        shift_month = int(rng.integers(6, 11))  # month 6-10
+
+    trajectory: list[PersonaConfig] = [_with_month(config, z0, 0)]
+
+    for month in range(1, n_months + 1):
+        z_new = list(z_arr)  # copy previous
+
+        # AR(1) drift on drift axes only
+        for idx in _DRIFT_AXES:
+            z_new[idx] = (
+                _AR1_ALPHA * z_arr[idx]
+                + (1.0 - _AR1_ALPHA) * 0.0  # mu=0 (centered at archetype mean)
+                + _AR1_SIGMA * rng.standard_normal()
+            )
+
+        # Regime shift: sudden loyalty decay or attention shift
+        if has_regime_shift and month == shift_month:
+            # Large negative shock to brand_lean (loyalty decay)
+            z_new[1] -= 1.5 + 0.5 * rng.standard_normal()
+            # Attentional bias shift
+            z_new[5] += 0.8 * rng.standard_normal()
+
+        z_month = LatentDeviation(
+            price_lean=z_new[0],
+            brand_lean=z_new[1],
+            thoroughness=z_new[2],
+            impulsivity=z_new[3],
+            search_orientation=z_new[4],
+            attentional_bias=z_new[5],
+            openness=z_new[6],
+        )
+        trajectory.append(_with_month(config, z_month, month))
+        z_arr = z_new  # carry forward for next month
+
+    log.debug(
+        "temporal_trajectory_sampled",
+        persona_id=config.persona_id,
+        n_months=n_months,
+        has_regime_shift=has_regime_shift,
+        shift_month=shift_month if has_regime_shift else None,
+    )
+    return trajectory
+
+
+def _with_month(config: PersonaConfig, z: LatentDeviation, month: int) -> PersonaConfig:
+    """Create a copy of config with updated latent z and month index."""
+    return replace(config, latent=z, month=month)
 
 
 # ---------------------------------------------------------------------------
