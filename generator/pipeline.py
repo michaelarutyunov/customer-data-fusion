@@ -502,6 +502,7 @@ def run_pipeline(
                     participant_config = {
                         "participant_id": participant_id,
                         "month": month,
+                        "random_seed": seed,
                         "drift_label": drift_label,
                         "drift_month": drift_month,
                         "price_sensitivity": month_config.transactions.price_sensitivity,
