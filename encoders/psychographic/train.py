@@ -43,7 +43,13 @@ def load_psychographics(
 ) -> list[PsychographicVector]:
     """Load psychographic records from JSONL."""
     return [
-        PsychographicVector(**json.loads(line))
+        PsychographicVector(
+            **{
+                k: v
+                for k, v in json.loads(line).items()
+                if k in PsychographicVector.__dataclass_fields__
+            }
+        )
         for line in path.read_text().strip().splitlines()
     ]
 

@@ -302,7 +302,16 @@ def load_records(path: Path | str | None = None) -> list[TransactionRecord]:
     path = Path(path) if path else TRANSACTIONS_FILE
     records = []
     for line in path.open():
-        records.append(TransactionRecord(**json.loads(line)))
+        data = json.loads(line)
+        records.append(
+            TransactionRecord(
+                **{
+                    k: v
+                    for k, v in data.items()
+                    if k in TransactionRecord.__dataclass_fields__
+                }
+            )
+        )
     logger.info("Loaded %d transaction records from %s", len(records), path)
     return records
 

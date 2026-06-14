@@ -336,7 +336,13 @@ def load_data(
 ) -> tuple[list[AcquisitionEvent], dict[str, TrialRecord]]:
     """Load traces and trials from JSONL files."""
     events = [
-        AcquisitionEvent(**json.loads(line))
+        AcquisitionEvent(
+            **{
+                k: v
+                for k, v in json.loads(line).items()
+                if k in AcquisitionEvent.__dataclass_fields__
+            }
+        )
         for line in traces_path.read_text().strip().split("\n")
         if line.strip()
     ]
@@ -344,7 +350,15 @@ def load_data(
         r.trial_id: r
         for line in trials_path.read_text().strip().split("\n")
         if line.strip()
-        for r in [TrialRecord(**json.loads(line))]
+        for r in [
+            TrialRecord(
+                **{
+                    k: v
+                    for k, v in json.loads(line).items()
+                    if k in TrialRecord.__dataclass_fields__
+                }
+            )
+        ]
     }
     return events, trials
 
