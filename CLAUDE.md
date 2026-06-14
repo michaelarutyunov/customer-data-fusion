@@ -186,9 +186,12 @@ Every bead that dispatches parallel sub-agents must include an explicit **Merge 
 | Prototype summary | `.claude/context/prototype-summary.md` |
 | Post-prototype capabilities | `.claude/context/new-capabilities.md` |
 | Modality expansion plan | `.claude/context/modality-expansion.md` |
+| Schema-update post-mortem | `docs/post-mortems/schema-update-postmortem.md` |
 
 ---
 
 ## Current Phase
 
 **Prototype Complete.** All phases closed. Four modality encoders trained with CE + NT-Xent multi-task objective (epic 3eg). Late-fusion meta-learner achieves 100% strategy recovery (Tier 1) and 70.4% dropout-view recall@1 (140× over chance — individual-level CDT, not just archetype classification). PersonaConfig regression R² 0.79–0.96 on all 7 parameters. Both counterfactual options implemented: Option A (archetype redistribution) and Option B (generator re-run via `counterfactual_overrides`, epic sei). PRD validation: 2 PASS, 2 PARTIAL. See `.claude/context/prd-validation.md` for formal criterion assessment and `.claude/context/prototype-summary.md` for stakeholder summary.
+
+**Schema-update epic (in progress — branch `feature/1it-thread-participant-id`).** Extending to 6 modalities (clickstream + campaign) with variable-modality late fusion. 5 of 6 beads closed: generators thread `participant_id` for per-participant attribution (`1it`, + `--skip-narratives` truncation fix); campaign encoder recovery 0.71 (`33x`); clickstream encoder + archetype-keyed intent priors, recovery 0.23→0.52 (`syu`/`fso`); `fusion/train.py` refactored to a variable-modality loader with `assert n_modalities == len(encoders)` + `participant_ids`-exclusion guard (`hcx`); **5-modality dry run = 95% archetype recovery**. **Open:** `2io` — full 6-modality run pending narrative regeneration. See `.claude/context/modality-expansion.md`, `.claude/context/fusion-architecture.md`, and `docs/post-mortems/schema-update-postmortem.md`.

@@ -114,6 +114,8 @@ MLflow logs per epoch: `train_ce_loss`, `train_nt_loss`, `val_loss`, `val_acc`.
 - CDT embedding dim is fixed at **128** (`schemas.EMBEDDING_DIM`) — must match individual encoder output dim
 - `fusion/` may import encoder model classes to reconstruct architectures for checkpoint loading; it must not import encoder training logic
 - When instantiating encoders in `load_encoders()`, use default constructor arguments — do NOT hardcode non-default dims (e.g. `TransactionEncoder()` not `TransactionEncoder(projection_dim=16, gru_hidden=32)`)
+- `load_encoders(modalities=...)` / `generate_embeddings(...)` take an explicit modality set (default: all `CHECKPOINT_PATHS`); `main()` drops `"text"` when `narratives.jsonl` is empty (dry-run mode). Instantiate `LateFusionMetaLearner(n_modalities=...)` with the actual loaded count.
+- Every run must assert `n_modalities == len(encoders)` and the stacked embedding shape `[N, n_modalities, 128]`; `_MODALITIES` must exclude BOTH `"labels"` and `"participant_ids"`. A 4-modality regression or a `participant_ids` leak must fail loudly.
 
 ## What This Enables (the evaluation perspective)
 
@@ -146,6 +148,16 @@ Correct: compute two dropout-augmented CDT views, measure recall@1 between them 
 Wrong: `sim.fill_diagonal_(-inf)` when computing recall between two DIFFERENT embedding matrices (v1 and v2 from different dropout seeds)
 Why wrong: the diagonal IS the correct positive match (participant i in v1 vs participant i in v2). Masking it removes the answer and makes recall@1 always 0.
 Correct: only fill diagonal when query and gallery are the SAME matrix (same-space self-retrieval)
+
+**Letting `participant_ids` leak into `_MODALITIES`**
+Wrong: `_MODALITIES = [k for k in embeddings if k != "labels"]`
+Why wrong: the `embeddings` cache also holds `"participant_ids"` (a list, not a tensor); it leaks into the modality set and corrupts `torch.stack`/`torch.cat`.
+Correct: `_MODALITIES = [k for k in embeddings if k not in ("labels", "participant_ids")]`, guarded by `assert n_modalities == len(encoders)` and a stacked-shape assert `[N, n_modalities, 128]`.
+
+**Trusting "variable-N" claims without asserting the actual N**
+Wrong: assuming a dynamic `_MODALITIES` derivation means the loader is variable-modality.
+Why wrong: the meta-learner and `_MODALITIES` line can be variable while the embedding *production* path (`load_encoders`/`generate_embeddings`) stays hardcoded to 4 — a flexible consumer fed by a rigid producer silently degrades to the producer's count (the schema-update "half-truth"; the 6-modality meta-learner masked a 4-modality loader).
+Correct: `load_encoders`/`generate_embeddings` take an explicit modality set; assert `n_modalities == len(encoders)` + stacked shape in every run so a count regression fails loudly. Instantiate `LateFusionMetaLearner` with the *actual* `n_modalities`, not the default 6.
 
 ## Context Documents
 

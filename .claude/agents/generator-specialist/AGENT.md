@@ -88,6 +88,12 @@ JSONL format: one record per line, each line is a JSON-serialised dataclass.
 
 **Important:** `participant_configs.jsonl` writes to `output_dir` (not a canonical path). This allows counterfactual runs to temp directories without corrupting the main dataset.
 
+### Schema-update epic patterns (beads `1it`, `fso`)
+- **Per-participant attribution (bead `1it`):** clickstream/campaign events carry `participant_id` (the individual consumer) alongside `customer_id` (the archetype slug, retained for anonymous grouping). `simulate_clickstream`/`simulate_campaigns` take `participant_id` as a **required** param; the pipeline passes it. Encoder training and fusion group by `participant_id`, NEVER `customer_id`. Anonymous sessions use `participant_id=""`. Before `1it` these modalities keyed only on `customer_id`, collapsing every participant in an archetype to one id and making per-participant training impossible.
+- **Archetype-determinism sets a modality's signal ceiling (bead `fso`).** Clickstream originally perturbed transitions only by within-archetype `config.latent` → near-zero archetype signal (raw baseline = chance). `_INTENT_WEIGHTS` (archetype-keyed BROWSE/RESEARCH/BUY priors, grounded in `persona-archetypes.md`) lifted raw baseline 0.15→0.40. When adding a modality, decide its archetype-determinism deliberately: archetype-keyed structures (like campaign's `_DISPATCH_WEIGHTS`) give strong archetype signal; latent-only structures give individual-but-not-archetype signal.
+- **`--skip-narratives` is a no-op on `narratives.jsonl`, not a truncation.** Only open the narratives handle when actually generating; never open it `"w"` then skip.
+- **`month` field:** all event-stream records carry `month` (1–12) for temporal partitioning; the immutable schema dataclasses do NOT model it. Consumers must field-filter when constructing, never `Schema(**record)`.
+
 ## Key Constraints
 - Never instantiate a modality dataclass with parameters that didn't come from the same `PersonaConfig`
 - Never call the LLM API inside a trial simulation loop — batch narrative generation separately

@@ -187,6 +187,7 @@ Web session event log. Many events per session, many sessions per customer per m
 | Field | Type | Description |
 |---|---|---|
 | `customer_id` | `str` | Matches `PersonaConfig.persona_id` (`'anonymous'` for unresolved sessions) |
+| `participant_id` | `str` | Individual consumer id (`''` for anonymous sessions). Added bead `1it` (2026-06-13) — the per-participant attribution key the encoder + fusion group by. `SessionSummary` carries the same field. |
 | `session_id` | `str` | Unique session identifier |
 | `event_ts` | `str` | ISO datetime string |
 | `event_type` | `ClickstreamEventType` | `PAGE_VIEW`, `PRODUCT_VIEW`, `ADD_TO_CART`, `REMOVE_FROM_CART`, `SEARCH`, `FILTER_APPLY`, `CHECKOUT_START`, `PURCHASE` |
@@ -197,7 +198,7 @@ Web session event log. Many events per session, many sessions per customer per m
 | `dwell_ms` | `float` | Log-normal dwell (sigma=0.8) |
 | `month` | `int` | Temporal month (1–12) |
 
-Output files: `data/synthetic/clickstream/session_events.jsonl`, `sessions.jsonl` (+ month-partitioned)
+Output files: `data/synthetic/clickstream.jsonl` (events + `SessionSummary` rows interleaved) and `clickstream_month_{MM}.jsonl` (month-partitioned).
 
 ---
 
@@ -208,6 +209,7 @@ Campaign interaction log. Email/push dispatch + response funnel.
 | Field | Type | Description |
 |---|---|---|
 | `customer_id` | `str` | Matches `PersonaConfig.persona_id` |
+| `participant_id` | `str` | Individual consumer id. Added bead `1it` (2026-06-13) — the per-participant attribution key. |
 | `campaign_id` | `str` | `CAMP-{type}-{seq:04d}` |
 | `sent_ts` | `str` | ISO datetime string |
 | `campaign_type` | `CampaignType` | `PROMOTION`, `NEWSLETTER`, `RE_ENGAGEMENT`, `LOYALTY`, `NEW_PRODUCT` |
@@ -225,6 +227,11 @@ Output files: `data/synthetic/campaigns.jsonl` (+ month-partitioned `campaigns_m
 
 ## Cross-Modal Key
 
-All modalities share `participant_id` / `customer_id = PersonaConfig.persona_id`. The pipeline cycles archetypes, so the same `persona_id` string will appear for multiple participants when `n > 7`. For uniqueness tracking across a large dataset, use `(persona_id, participant_index)` or add a participant counter field in a future schema version.
+All modalities key on the **individual** `participant_id` (e.g. `price_lex_0042`) — the canonical join key for fusion. Note the split on the two newest event-stream modalities:
+
+- **Transactions, traces, trials, psychographics**: carry `participant_id` directly.
+- **Clickstream, campaigns** (bead `1it`, 2026-06-13): carry BOTH `customer_id = PersonaConfig.persona_id` (the archetype slug, retained for anonymous grouping/exclusion) AND `participant_id` (the individual consumer). **Encoder training and fusion group by `participant_id`, not `customer_id`.** Anonymous clickstream sessions have `customer_id='anonymous'` and `participant_id=''`.
+
+Before bead `1it`, clickstream/campaign keyed only on the archetype-level `customer_id`, which collapsed all participants in an archetype to one id and made per-participant training impossible. `participant_id` (`{persona_id}_{index:04d}`) is unique per individual; the pipeline cycles archetypes so the same `persona_id` recurs when `n > 7`.
 
 All event-stream modalities (transactions, clickstream, campaigns) include a `month` field (1–12) for temporal partitioning. Snapshot modalities (traces, psychographics) are fielded at specific months (traces: 1–2 on coverage subset; psychographics: 1 and 7).

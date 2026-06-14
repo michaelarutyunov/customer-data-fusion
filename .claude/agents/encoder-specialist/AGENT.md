@@ -111,6 +111,12 @@ acc = accuracy_score(labels[val_idx], clf.predict(embeddings[val_idx]))
 
 This is the canonical strategy recovery metric. Never use the classification head accuracy as the primary metric — it's auxiliary.
 
+### Schema-update epic patterns (beads `syu`, `33x`, `fso`)
+- **MLflow env:** `MLFLOW_TRACKING_URI` lives in `.env`. Train entrypoints must call `load_dotenv(override=True)` in `__main__` before `mlflow.start_run()`, or they hit the file-store "maintenance mode" exception. (Matches `evaluation/run_probes.py`.)
+- **Construct schema dataclasses with field-filtering:** `Schema(**{k: v for k, v in rec.items() if k in Schema.__dataclass_fields__})`, never `Schema(**rec)`. The generator writes a `month` field the immutable schemas don't model — `Schema(**rec)` crashes with `TypeError: unexpected keyword argument 'month'` (hit in trace/transaction/psychographic train + the fusion trace loader).
+- **Diagnosing "no signal" vs "training bug":** if strategy recovery is near chance, run a raw-feature baseline (mean-pooled tokens → LogisticRegression) *before* tuning the encoder. `trained_acc > raw_baseline > chance` proves labels are correct and the signal is weak (fix the generator); all-three-equal-chance is ambiguous (could be a label-mapping bug). Clickstream's raw baseline was 0.15 (chance) → the generator lacked archetype signal, fixed by `fso`'s archetype-keyed intent priors.
+- **"Encoder module ✓" ≠ "encoder trainable ✓":** a closed "create encoder" bead may have shipped `model.py` + `features.py` without `train.py`. Verify the training entrypoint exists before assuming an encoder is ready for fusion (beads `53o`/`sf2` were closed without their promised `train.py`).
+
 ### Pass thresholds by encoder (post-epic-3eg CE + NT-Xent objective)
 
 | Encoder | val_acc criterion | similarity_delta criterion | Actual result |

@@ -3,6 +3,7 @@
 > Tier 3 context document — see `codified-context-principles.md` for governance.
 > Authoritative spec: `fusion/SPEC.md`. This document explains intent and rationale.
 > Updated: schema-update epic (2026-06-13) — 6-modality fusion, learned MISSING embedding, variable n_modalities.
+> Verified 2026-06-14 (beads `1it`→`hcx`): variable-modality loader implemented + asserted; 5-modality dry run (text dropped) = **95.0% archetype recovery**. Full 6-modality run pending narrative regeneration (bead `2io`).
 
 ---
 
@@ -10,7 +11,9 @@
 
 The fusion layer takes independent per-participant embeddings (one per modality) and combines them into a single **CDT embedding** — the Consumer Digital Twin's compressed behavioural representation. It is the only place in the architecture where cross-modal information interacts.
 
-Each modality encoder produces `[B, 128]`. With the schema-update epic, the modality count is **6** (trace, transaction, text, psychographic, clickstream, campaign), so the concatenation is `[B, 768]` → shallow MLP → `[B, 128]`. The `n_modalities` parameter is configurable; `train.py` derives it from the embedding cache, so the same code handles 4 or 6 modalities. The classification head (`[B, 7]`) is a training proxy — the 128-dim hidden state is the actual output.
+Each modality encoder produces `[B, 128]`. With the schema-update epic, the modality count is **6** (trace, transaction, text, psychographic, clickstream, campaign), so the concatenation is `[B, 768]` → shallow MLP → `[B, 128]`. The classification head (`[B, 7]`) is a training proxy — the 128-dim hidden state is the actual output.
+
+**Variable-modality loader (bead `hcx`, 2026-06-14).** `load_encoders(modalities=...)` and `generate_embeddings(...)` take a modality set (default: every key in `CHECKPOINT_PATHS`). `_MODALITIES` is derived as `[k for k in embeddings if k not in ("labels", "participant_ids")]` and guarded by two asserts — `n_modalities == len(encoders)` and stacked shape `[N, n_modalities, 128]`. The `"participant_ids"` exclusion is load-bearing: it is a list (not a tensor) and would corrupt `torch.stack`/`torch.cat` if it leaked into `_MODALITIES` (a latent bug the assert closes). `LateFusionMetaLearner` is instantiated with the *actual* `n_modalities`. `main()` drops `"text"` when `narratives.jsonl` is empty, yielding the 5-modality dry run. A 4-modality regression now fails loudly at the assert.
 
 ---
 
@@ -51,7 +54,7 @@ At inference, all modalities are active unless genuinely absent (partial coverag
 
 ## The Embedding Cache
 
-Encoder forward passes are expensive relative to meta-learner training (especially the transformer trace encoder). The training script caches all four `[1001, 128]` embedding matrices to `models/fusion_embeddings_cache.pt` before training begins.
+Encoder forward passes are expensive relative to meta-learner training (especially the transformer trace encoder). The training script caches all `[1001, 128]` embedding matrices (one per loaded modality — 4, 5, or 6 depending on the run) to `models/fusion_embeddings_cache.pt` before training begins.
 
 Cache invalidation: if any encoder checkpoint is newer than the cache file (mtime comparison), the cache is regenerated. This means retraining an encoder automatically triggers cache regeneration on the next fusion training run.
 
@@ -74,6 +77,22 @@ Phase 2a encoder probe results (val split, 201 participants):
 Text and psychographic encoders are near-sufficient statistics for the latent `PersonaConfig` — 100% accuracy is expected given the generative design (psychographics are a near-direct transcription of config params; narratives are LLM realisations of config params). Fusion will not exceed 100%. Do not use "beats best single modality" as an acceptance criterion.
 
 If fusion accuracy is lower than 85%, investigate ablation deltas to identify which modality is degrading the result. If all ablation deltas are near zero and accuracy is ≥85%, the modalities are encoding correlated information — this is a finding to report, not a failure (see `docs/post-mortems/phase2a-fix-postmortem.md` R7).
+
+### Schema-update epic — encoder + fusion results (1001 participants, 2026-06-14)
+
+Strategy recovery after retraining on the 1001-participant dataset (beads `syu`/`33x`/`fso` + stale-encoder retrain):
+
+| Modality | Strategy recovery | Notes |
+|---|---|---|
+| Trace | ~0.51 | retrained on 1001 |
+| Transaction | ~0.37 | retrained on 1001 |
+| Psychographic | ~0.68 | retrained on 1001 |
+| Text | — | not retrained this epic (narratives empty); checkpoint from prototype |
+| Campaign | 0.71 | new encoder (bead `33x`) |
+| Clickstream | 0.52 | new encoder (bead `syu`), after archetype-keying (`fso`); was 0.23 before |
+| **Fused (5-modality dry run)** | **0.95** | text dropped (no narratives); bead `hcx` |
+
+**Key finding — clickstream archetype signal:** clickstream's archetype signal is weak by *generator design* (transitions perturbed by within-archetype `config.latent`, not archetype-keyed). Bead `fso` added archetype-keyed session-intent priors, lifting raw-baseline recovery from 0.15 (chance) to 0.40 and encoder recovery 0.23 → 0.52. The 0.60 bead target was an encoder-capacity question, not a data one. Clickstream's real fusion value is individual identity (its NT-Xent term decreases), tested via recall@1 in the full 6-modality run (`2io`). See `docs/post-mortems/schema-update-postmortem.md`.
 
 ## Multi-Task Training Objective (v0.2 — NT-Xent + CE)
 

@@ -1,6 +1,6 @@
 # Modality Expansion Plan
 
-> **Status:** Planned. Epic `customer-data-fusion-1y0` (schema-update), 14 beads across 5 phases.
+> **Status:** In progress (2026-06-14). Epic `customer-data-fusion-1y0` (schema-update). 5 of 6 immediate beads closed: `1it` (participant_id threading through clickstream/campaign generators), `33x` (campaign encoder, recovery 0.71), `syu` (clickstream encoder), `fso` (clickstream archetype-keyed intent priors, recovery 0.23→0.52), `hcx` (variable-modality fusion loader; 5-modality dry run = **95% archetype recovery**). **Open:** `2io` — full 6-modality run, pending narrative regeneration (~1001 DeepSeek calls). See `docs/post-mortems/schema-update-postmortem.md` for the drift lessons.
 > **Source recommendations:** `docs/modalities.md` (modality set + temporal structure), `docs/modalities/mouselab.md` (process trace specifics).
 
 ---
