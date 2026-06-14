@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Consumer Digital Twin — Code Architecture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  /* ── Design tokens (from DESIGN.md) ── */
+  :root{
+    --bg:#F2F1ED; --panel:#FFFFFF; --ink:#14171C; --ink_2:#41474F; --ink_3:#7A828D;
+    --rule:#DDDCD4; --rule_strong:#C7C5BB; --line:#5B6471;
+    --g-intake:#5B6471; --g-graph:#4F6E8C; --g-state:#6B5C8A; --g-strategy:#8A5C5C;
+    --g-generation:#5C7A5C; --g-persist:#7A6B4F;
+    --b-llm-bg:#ECECF7; --b-llm-fg:#2E2A6B;
+    --b-emb-bg:#E1EFEA; --b-emb-fg:#16574A;
+    --b-pure-bg:#F2EAD6; --b-pure-fg:#5C4612;
+    --b-async-bg:#F8E8D5; --b-async-fg:#874A0B;
+    --b-edge-bg:#E4E0F0; --b-edge-fg:#3D2E6B;
+    --focus-bg:#F2EAD6; --focus-fg:#5C4612; --focus-border:#5C4612;
+    --f-body:'Inter Tight',-apple-system,sans-serif; --f-mono:'JetBrains Mono',monospace;
+    --sh-subtle:0 1px 0 rgba(20,23,28,0.04);
+    --sh-focus:0 0 6px rgba(20,23,28,0.05);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{
+    font-family:var(--f-body); color:var(--ink); background:var(--bg);
+    /* 40px alignment grid */
+    background-image:
+      linear-gradient(rgba(20,23,28,0.025) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(20,23,28,0.025) 1px, transparent 1px);
+    background-size:40px 40px;
+    line-height:1.35; -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1320px; margin:0 auto; padding:28px 40px 80px}
+
+  /* ── Typography helpers ── */
+  .eyebrow{font-family:var(--f-mono); font-size:11px; font-weight:500; letter-spacing:0.18em;
+    text-transform:uppercase; color:var(--ink_3)}
+  .mono{font-family:var(--f-mono)}
+  .ink2{color:var(--ink_2)} .ink3{color:var(--ink_3)}
+  h1{font-size:44px; font-weight:600; letter-spacing:-0.02em; line-height:1.05; margin-top:10px}
+  h2{font-size:22px; font-weight:600; letter-spacing:-0.02em}
+  .subtitle{font-size:18px; color:var(--ink_2); line-height:1.4; margin-top:12px; max-width:880px}
+
+  /* ── Reveal animation ── */
+  @keyframes rise{from{opacity:0; transform:translateY(10px)} to{opacity:1; transform:none}}
+  .reveal{opacity:0; animation:rise .6s cubic-bezier(.2,.7,.2,1) forwards}
+
+  /* ── Section frame ── */
+  section{margin-top:56px; animation-delay:calc(var(--i,0)*60ms)}
+  .sec-head{display:flex; align-items:baseline; gap:14px; border-bottom:1px solid var(--rule_strong); padding-bottom:12px; margin-bottom:22px}
+  .sec-num{font-family:var(--f-mono); font-size:11px; letter-spacing:0.08em; color:var(--ink_3)}
+  .sec-head h2{font-size:18px}
+  .sec-head .meta{margin-left:auto; font-family:var(--f-mono); font-size:11px; color:var(--ink_3); letter-spacing:0.04em}
+
+  /* ── Masthead ── */
+  .mast{padding:8px 0 4px}
+  .stat-row{display:flex; gap:10px; flex-wrap:wrap; margin-top:22px}
+  .stat{background:var(--panel); border:1px solid var(--rule_strong); border-radius:10px; padding:12px 16px;
+    box-shadow:var(--sh-subtle); min-width:150px}
+  .stat .v{font-family:var(--f-mono); font-size:22px; font-weight:600; letter-spacing:-0.01em}
+  .stat .l{font-family:var(--f-mono); font-size:10px; letter-spacing:0.12em; text-transform:uppercase; color:var(--ink_3); margin-top:4px}
+
+  /* ── Pipeline ── */
+  .pipeline{display:grid; grid-template-columns:1fr; gap:14px}
+  .group{position:relative; background:var(--panel); border:1px solid var(--rule_strong); border-radius:12px;
+    padding:16px 18px 18px; box-shadow:var(--sh-subtle); overflow:hidden}
+  .group::before{content:""; position:absolute; top:0; left:0; right:0; height:3px; background:var(--gc)}
+  .group-head{display:flex; align-items:baseline; gap:12px; margin-bottom:14px}
+  .group-tag{font-family:var(--f-mono); font-size:10px; letter-spacing:0.12em; color:var(--gc); font-weight:600}
+  .group-name{font-size:14px; font-weight:600; letter-spacing:0.12em; text-transform:uppercase; color:var(--ink)}
+  .group-sub{margin-left:auto; font-family:var(--f-mono); font-size:11px; color:var(--ink_3)}
+  .stages{display:grid; grid-template-columns:repeat(auto-fill,minmax(168px,1fr)); gap:8px}
+
+  .stage{background:var(--bg); border:1px solid var(--rule_strong); border-left:1.5px dashed var(--gc);
+    border-radius:10px; padding:10px 11px 9px; min-height:96px; display:flex; flex-direction:column; gap:4px;
+    transition:box-shadow .15s, transform .15s}
+  .stage:hover{box-shadow:var(--sh-focus); transform:translateY(-1px)}
+  .stage-n{font-family:var(--f-mono); font-size:10px; letter-spacing:0.08em; color:var(--ink_3)}
+  .stage-name{font-size:14px; font-weight:600; line-height:1.15}
+  .stage-desc{font-size:12px; color:var(--ink_2); line-height:1.3; flex:1}
+  .stage-meta{font-family:var(--f-mono); font-size:10px; color:var(--ink_3); letter-spacing:0.02em; margin-top:2px}
+  .badges{display:flex; gap:4px; flex-wrap:wrap; margin-top:4px}
+  .badge{display:inline-flex; align-items:center; padding:2px 6px; border-radius:4px;
+    font-family:var(--f-mono); font-size:10px; font-weight:500; letter-spacing:0.04em; line-height:1.4; white-space:nowrap}
+
+  /* ── Flow connectors between groups ── */
+  .flow{display:flex; justify-content:center; padding:2px 0 2px}
+  .flow .arrow{width:2px; height:22px; background:var(--line); position:relative}
+  .flow .arrow::after{content:""; position:absolute; bottom:-1px; left:50%; transform:translateX(-50%);
+    border:5px solid transparent; border-top:7px solid var(--line); border-bottom:0}
+
+  /* ── Endpoints row ── */
+  .endpoints{display:flex; align-items:center; justify-content:center; gap:18px; margin:6px 0 4px}
+  .endpoint{width:96px; height:96px; border-radius:50%; border:1.5px solid var(--ink); background:var(--panel);
+    display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center;
+    box-shadow:var(--sh-subtle)}
+  .endpoint.out{background:var(--ink); color:var(--bg)}
+  .endpoint .e-name{font-size:13px; font-weight:600; line-height:1.1; padding:0 8px}
+  .endpoint .e-mono{font-family:var(--f-mono); font-size:10px; letter-spacing:0.08em; opacity:.7; margin-top:3px}
+  .ep-arrow{flex:0 0 auto; display:flex; flex-direction:column; align-items:center; color:var(--ink_3)}
+  .ep-arrow .ln{width:140px; height:2px; background:var(--line); position:relative}
+  .ep-arrow .ln::after{content:""; position:absolute; right:-1px; top:50%; transform:translateY(-50%);
+    border:5px solid transparent; border-left:7px solid var(--line); border-right:0}
+  .ep-arrow .lab{font-family:var(--f-mono); font-size:10px; letter-spacing:0.04em; margin-bottom:4px; color:var(--ink_3)}
+
+  /* ── Parallel block (encoders run concurrently) ── */
+  .parblock{border:1.5px dashed var(--b-async-fg); border-radius:12px; padding:20px 16px 16px;
+    background:rgba(248,232,213,0.22); position:relative; margin-top:6px}
+  .parblock .parlabel{position:absolute; top:-10px; left:14px; background:var(--bg); padding:0 8px;
+    font-family:var(--f-mono); font-size:11px; color:var(--b-async-fg); letter-spacing:0.04em}
+
+  /* ── Encoder spec cards ── */
+  .enc-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:14px}
+  .enc{background:var(--panel); border:1px solid var(--rule_strong); border-radius:10px; padding:16px;
+    box-shadow:var(--sh-subtle); position:relative; overflow:hidden}
+  .enc::before{content:""; position:absolute; top:0; left:0; bottom:0; width:3px; background:var(--g-state)}
+  .enc-head{display:flex; align-items:baseline; gap:8px; margin-bottom:4px}
+  .enc-id{font-family:var(--f-mono); font-size:11px; color:var(--ink_3); letter-spacing:0.04em}
+  .enc-name{font-size:16px; font-weight:600}
+  .enc-arch{font-size:12px; color:var(--ink_2); margin-bottom:10px}
+  .enc table{width:100%; border-collapse:collapse; font-size:12px}
+  .enc td{padding:4px 0; vertical-align:top; border-top:1px solid var(--rule)}
+  .enc td:first-child{font-family:var(--f-mono); font-size:10px; letter-spacing:0.06em; text-transform:uppercase;
+    color:var(--ink_3); width:42%; padding-right:10px}
+  .enc td:last-child{color:var(--ink_2)}
+  .enc .code{font-family:var(--f-mono); font-size:11px; color:var(--ink)}
+  .recov{display:inline-block; font-family:var(--f-mono); font-size:11px; font-weight:600;
+    background:var(--b-emb-bg); color:var(--b-emb-fg); padding:2px 7px; border-radius:4px}
+
+  /* ── Fusion internals ── */
+  .fusion-wrap{display:grid; grid-template-columns:1.15fr 1fr; gap:18px}
+  .panel-box{background:var(--panel); border:1px solid var(--rule_strong); border-radius:12px; padding:18px;
+    box-shadow:var(--sh-subtle)}
+  .mlp-chain{display:flex; flex-direction:column; gap:6px}
+  .mlp-step{display:flex; align-items:center; gap:10px; background:var(--bg); border:1px solid var(--rule_strong);
+    border-radius:7px; padding:9px 11px}
+  .mlp-step .dim{font-family:var(--f-mono); font-size:11px; color:var(--ink_3); min-width:74px}
+  .mlp-step .op{font-size:13px; font-weight:500}
+  .mlp-step .act{font-family:var(--f-mono); font-size:10px; color:var(--b-async-fg); margin-left:auto;
+    background:var(--b-async-bg); padding:2px 6px; border-radius:4px}
+  .down-arrow{align-self:center; color:var(--ink_3); font-family:var(--f-mono); font-size:11px}
+  .callout{border-left:2px solid var(--g-strategy); background:rgba(138,92,92,0.06); border-radius:0 8px 8px 0;
+    padding:12px 14px; margin-top:12px}
+  .callout .ct{font-family:var(--f-mono); font-size:10px; letter-spacing:0.12em; text-transform:uppercase; color:var(--g-strategy); font-weight:600}
+  .callout pre{font-family:var(--f-mono); font-size:11px; color:var(--ink); margin-top:8px; white-space:pre-wrap; line-height:1.5}
+  .loss-eq{background:var(--ink); color:var(--bg); border-radius:8px; padding:14px 16px; font-family:var(--f-mono);
+    font-size:13px; line-height:1.6; margin-top:10px}
+  .loss-eq .k{color:var(--b-emb-bg)} .loss-eq .c{color:#9CA8B4}
+
+  /* ── Contract ── */
+  .contract{display:grid; grid-template-columns:repeat(6,1fr); gap:8px; margin-top:6px}
+  .mod{background:var(--panel); border:1px solid var(--rule_strong); border-radius:8px; padding:10px;
+    text-align:center; box-shadow:var(--sh-subtle)}
+  .mod .m-name{font-family:var(--f-mono); font-size:11px; font-weight:600; letter-spacing:0.04em}
+  .mod .m-key{font-size:10px; color:var(--ink_3); margin-top:5px; line-height:1.3}
+  .join-note{background:var(--focus-bg); border:1px solid var(--focus-border); border-radius:8px;
+    padding:12px 14px; margin-top:14px; font-size:13px; color:var(--focus-fg); line-height:1.45}
+  .join-note code{font-family:var(--f-mono); font-size:12px; background:rgba(92,70,18,0.12); padding:1px 5px; border-radius:3px}
+
+  /* ── Section prose / caption ── */
+  .prose{font-size:13px; color:var(--ink_2); line-height:1.5; margin-bottom:14px}
+  .prose strong{color:var(--ink)} .prose em{color:var(--ink); font-style:italic}
+  .caption{font-family:var(--f-mono); font-size:10px; color:var(--ink_3); letter-spacing:0.02em;
+    line-height:1.45; margin-top:10px; padding-top:8px; border-top:1px solid var(--rule)}
+
+  /* ── Applications / business scenarios ── */
+  .cap-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:12px}
+  .cap{background:var(--panel); border:1px solid var(--rule_strong); border-radius:10px; padding:14px;
+    box-shadow:var(--sh-subtle); position:relative; overflow:hidden}
+  .cap::before{content:""; position:absolute; top:0; left:0; bottom:0; width:3px; background:var(--cc)}
+  .cap-head{display:flex; align-items:baseline; gap:8px; margin-bottom:6px}
+  .cap-code{font-family:var(--f-mono); font-size:11px; font-weight:600; letter-spacing:0.04em; color:var(--cc)}
+  .cap-name{font-size:15px; font-weight:600}
+  .cap-desc{font-size:12px; color:var(--ink_2); line-height:1.4; min-height:54px}
+  .cap-desc .mono{font-size:11px}
+  .cap-meta{display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-top:10px; padding-top:8px; border-top:1px solid var(--rule)}
+  .cap-status{font-family:var(--f-mono); font-size:10px; letter-spacing:0.06em; text-transform:uppercase; font-weight:600}
+  .cache-note{display:flex; align-items:center; gap:12px; background:var(--ink); color:var(--bg);
+    border-radius:8px; padding:12px 14px; margin-top:14px; font-size:12px; line-height:1.4}
+  .cache-note .tag{flex:0 0 auto; font-family:var(--f-mono); font-size:10px; letter-spacing:0.08em;
+    background:var(--b-emb-bg); color:var(--b-emb-fg); padding:3px 7px; border-radius:4px; font-weight:600}
+  .cache-note .mono{color:#C9D6DF}
+
+  /* ── Legend ── */
+  .legend{border-top:1px solid var(--rule_strong); margin-top:48px; padding-top:18px;
+    display:flex; gap:28px; flex-wrap:wrap; align-items:center}
+  .legend-grp{display:flex; align-items:center; gap:6px; font-size:13px; color:var(--ink_2)}
+  .legend-grp .sw{width:14px; height:14px; border-radius:3px}
+  .foot{font-family:var(--f-mono); font-size:11px; color:var(--ink_3); letter-spacing:0.04em; margin-top:24px;
+    display:flex; justify-content:space-between; gap:20px; flex-wrap:wrap}
+
+  @media(max-width:980px){.enc-grid{grid-template-columns:repeat(2,1fr)} .fusion-wrap{grid-template-columns:1fr} .contract{grid-template-columns:repeat(3,1fr)}}
+  @media(max-width:640px){.enc-grid{grid-template-columns:1fr} .contract{grid-template-columns:repeat(2,1fr)} .ep-arrow .ln{width:60px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ════════ MASTHEAD ════════ -->
+  <header class="mast reveal" style="--i:0">
+    <div class="eyebrow">schema-update epic · 6-modality late fusion</div>
+    <h1>Consumer Digital Twin</h1>
+    <p class="subtitle">A research prototype: a single <span class="mono">PersonaConfig</span> is sampled per consumer and radiates into six behavioural modalities. Each modality is encoded independently into a 128-dim space; a late-fusion meta-learner compresses them into one <strong>CDT embedding</strong> — individual-discriminative, not just archetype-classifying.</p>
+    <div class="stat-row">
+      <div class="stat"><div class="v">6</div><div class="l">modalities</div></div>
+      <div class="stat"><div class="v">768</div><div class="l">concat dim · 6×128</div></div>
+      <div class="stat"><div class="v">128</div><div class="l">cdt embedding · EMBEDDING_DIM</div></div>
+      <div class="stat"><div class="v">95.0%</div><div class="l">archetype recovery · 5-mod dry run</div></div>
+      <div class="stat"><div class="v">70.4%</div><div class="l">recall@1 · dropout-view (prototype)</div></div>
+      <div class="stat"><div class="v">7</div><div class="l">personas · generative root</div></div>
+    </div>
+  </header>
+
+  <!-- ════════ END-TO-END FLOW ════════ -->
+  <section class="reveal" style="--i:1">
+    <div class="sec-head">
+      <span class="sec-num">01</span><h2>End-to-end data flow</h2>
+      <span class="meta">schemas/ → generator/ → encoders/ → fusion/ → evaluation/</span>
+    </div>
+
+    <div class="endpoints reveal" style="--i:2">
+      <div class="endpoint">
+        <div class="e-name">PersonaConfig</div>
+        <div class="e-mono">generative root</div>
+      </div>
+      <div class="ep-arrow"><span class="lab">radiates → 6 modalities</span><span class="ln"></span></div>
+      <div class="endpoint out">
+        <div class="e-name">CDT Embedding</div>
+        <div class="e-mono">[B, 128]</div>
+      </div>
+    </div>
+
+    <div class="pipeline" style="margin-top:14px">
+
+      <!-- GROUP: generative root -->
+      <div class="group" style="--gc:var(--g-intake)">
+        <div class="group-head"><span class="group-tag">G0</span><span class="group-name">Generative root</span><span class="group-sub">config/personas.yaml · schemas/persona.py</span></div>
+        <div class="stages">
+          <div class="stage"><div class="stage-n">00</div><div class="stage-name">PersonaConfig</div><div class="stage-desc">Frozen immutable dataclass. One per consumer. Source of every modality — cross-modal consistency is guaranteed at generation time.</div><div class="stage-meta">+ LatentDeviation z (7 axes)</div><div class="badges"><span class="badge" style="background:var(--b-pure-bg);color:var(--b-pure-fg)">pure</span></div></div>
+          <div class="stage"><div class="stage-n">01</div><div class="stage-name">7 archetypes</div><div class="stage-desc">price_lex · quality_lex · compensatory · satisficer · brand_affect · low_involve · adaptive. Each a stochastic policy with per-participant Gaussian noise (σ=5%).</div><div class="stage-meta">persona_id = archetype slug</div><div class="badges"><span class="badge" style="background:var(--b-pure-bg);color:var(--b-pure-fg)">pure</span></div></div>
+        </div>
+      </div>
+      <div class="flow"><div class="arrow"></div></div>
+
+      <!-- GROUP: generators -->
+      <div class="group" style="--gc:var(--g-graph)">
+        <div class="group-head"><span class="group-tag">G1</span><span class="group-name">Generators</span><span class="group-sub">generator/pipeline.py orchestrates per participant · 12-month temporal</span></div>
+        <div class="stages">
+          <div class="stage"><div class="stage-n">10</div><div class="stage-name">Process traces</div><div class="stage-desc">MouseLab-style acquisition events + trials. Snapshot months 1–2, coverage subset only.</div><div class="stage-meta">250 / 1000 coverage</div><div class="badges"><span class="badge" style="background:var(--b-pure-bg);color:var(--b-pure-fg)">pure</span></div></div>
+          <div class="stage"><div class="stage-n">11</div><div class="stage-name">Transactions</div><div class="stage-desc">12-month purchase history. brand_tier, channel, price_paid_normalised.</div><div class="stage-meta">event-stream · monthly</div><div class="badges"><span class="badge" style="background:var(--b-pure-bg);color:var(--b-pure-fg)">pure</span></div></div>
+          <div class="stage"><div class="stage-n">12</div><div class="stage-name">Psychographics</div><div class="stage-desc">Survey trait vector. Near-direct transcription of config params.</div><div class="stage-meta">snapshot · months 1 &amp; 7</div><div class="badges"><span class="badge" style="background:var(--b-pure-bg);color:var(--b-pure-fg)">pure</span></div></div>
+          <div class="stage"><div class="stage-n">13</div><div class="stage-name">Narratives</div><div class="stage-desc">LLM persona short-story realisation of config params.</div><div class="stage-meta">snapshot · month 1</div><div class="badges"><span class="badge" style="background:var(--b-llm-bg);color:var(--b-llm-fg)">llm</span></div></div>
+          <div class="stage"><div class="stage-n">14</div><div class="stage-name">Clickstream</div><div class="stage-desc">Markov web sessions. <strong>Archetype-keyed intent priors</strong> (bead fso) drive BROWSE/RESEARCH/BUY mix → transition matrices.</div><div class="stage-meta">event-stream · monthly</div><div class="badges"><span class="badge" style="background:var(--b-pure-bg);color:var(--b-pure-fg)">pure</span><span class="badge" style="background:var(--b-edge-bg);color:var(--b-edge-fg)">edge</span></div></div>
+          <div class="stage"><div class="stage-n">15</div><div class="stage-name">Campaigns</div><div class="stage-desc">Email/push dispatch + sigmoid response funnel. Archetype-keyed dispatch weights.</div><div class="stage-meta">event-stream · monthly</div><div class="badges"><span class="badge" style="background:var(--b-pure-bg);color:var(--b-pure-fg)">pure</span></div></div>
+        </div>
+      </div>
+      <div class="flow"><div class="arrow"></div></div>
+
+      <!-- GROUP: encoders (parallel block) -->
+      <div class="parblock reveal" style="--i:3">
+        <span class="parlabel">async · independent training · no cross-coupling</span>
+        <div class="group" style="--gc:var(--g-state); border:0; box-shadow:none; background:transparent">
+          <div class="group-head"><span class="group-tag">G2</span><span class="group-name">Modality encoders</span><span class="group-sub">each: own objective → [B, 128] · forward_with_logits → (emb, logits)</span></div>
+          <div class="stages">
+            <div class="stage"><div class="stage-n">20</div><div class="stage-name">Trace</div><div class="stage-desc">Transformer over trial event tokens.</div><div class="stage-meta">recovery ~0.51</div><div class="badges"><span class="badge" style="background:var(--b-emb-bg);color:var(--b-emb-fg)">embed</span></div></div>
+            <div class="stage"><div class="stage-n">21</div><div class="stage-name">Transaction</div><div class="stage-desc">2-layer GRU, hidden=128. Next-brand-tier + CE+NT-Xent.</div><div class="stage-meta">recovery ~0.37</div><div class="badges"><span class="badge" style="background:var(--b-emb-bg);color:var(--b-emb-fg)">embed</span></div></div>
+            <div class="stage"><div class="stage-n">22</div><div class="stage-name">Psychographic</div><div class="stage-desc">MLP projector over survey vector.</div><div class="stage-meta">recovery ~0.68</div><div class="badges"><span class="badge" style="background:var(--b-emb-bg);color:var(--b-emb-fg)">embed</span></div></div>
+            <div class="stage"><div class="stage-n">23</div><div class="stage-name">Text</div><div class="stage-desc">Frozen sentence-transformer + linear projection.</div><div class="stage-meta">recovery 100%</div><div class="badges"><span class="badge" style="background:var(--b-llm-bg);color:var(--b-llm-fg)">llm</span><span class="badge" style="background:var(--b-emb-bg);color:var(--b-emb-fg)">embed</span></div></div>
+            <div class="stage"><div class="stage-n">24</div><div class="stage-name">Clickstream</div><div class="stage-desc">2-stage GRU: encode_session → forward aggregates sessions.</div><div class="stage-meta">recovery 0.52</div><div class="badges"><span class="badge" style="background:var(--b-emb-bg);color:var(--b-emb-fg)">embed</span></div></div>
+            <div class="stage"><div class="stage-n">25</div><div class="stage-name">Campaign</div><div class="stage-desc">Transformer: d_model=32, 2 heads, 2 layers.</div><div class="stage-meta">recovery 0.71</div><div class="badges"><span class="badge" style="background:var(--b-emb-bg);color:var(--b-emb-fg)">embed</span></div></div>
+          </div>
+        </div>
+      </div>
+      <div class="flow"><div class="arrow"></div></div>
+
+      <!-- GROUP: fusion -->
+      <div class="group" style="--gc:var(--g-strategy)">
+        <div class="group-head"><span class="group-tag">G3</span><span class="group-name">Late fusion meta-learner</span><span class="group-sub">fusion/meta_learner.py · fusion/train.py · variable n_modalities</span></div>
+        <div class="stages">
+          <div class="stage"><div class="stage-n">30</div><div class="stage-name">Concat</div><div class="stage-desc">torch.cat slots → [B, n×128]. n derived from loaded modality set.</div><div class="stage-meta">768 @ n=6 · 640 @ n=5</div><div class="badges"><span class="badge" style="background:var(--b-pure-bg);color:var(--b-pure-fg)">pure</span></div></div>
+          <div class="stage"><div class="stage-n">31</div><div class="stage-name">MISSING embedding</div><div class="stage-desc">Learned [n,128] vector per slot. Replaces absent modalities (250/1000 traces) — not zero-fill.</div><div class="stage-meta">apply_missing_mask</div><div class="badges"><span class="badge" style="background:var(--b-pure-bg);color:var(--b-pure-fg)">pure</span></div></div>
+          <div class="stage"><div class="stage-n">32</div><div class="stage-name">MLP compressor</div><div class="stage-desc">768 → 256 → 128. LayerNorm + GELU + Dropout. Output = CDT embedding.</div><div class="stage-meta">dropout p=0.2 / 0.1</div><div class="badges"><span class="badge" style="background:var(--b-pure-bg);color:var(--b-pure-fg)">pure</span></div></div>
+          <div class="stage"><div class="stage-n">33</div><div class="stage-name">Multi-task head</div><div class="stage-desc">CE (archetype, [B,7]) + λ·NT-Xent (individual identity, dropout-view).</div><div class="stage-meta">λ=0.5 · τ=0.07</div><div class="badges"><span class="badge" style="background:var(--b-pure-bg);color:var(--b-pure-fg)">pure</span></div></div>
+        </div>
+      </div>
+      <div class="flow"><div class="arrow"></div></div>
+
+      <!-- GROUP: evaluation -->
+      <div class="group" style="--gc:var(--g-generation)">
+        <div class="group-head"><span class="group-tag">G4</span><span class="group-name">Evaluation</span><span class="group-sub">evaluation/ · temporal split months 1–8 / 9–12</span></div>
+        <div class="stages">
+          <div class="stage"><div class="stage-n">40</div><div class="stage-name">Archetype recovery</div><div class="stage-desc">CE head accuracy — Tier 1 gate.</div><div class="stage-meta">target &gt;95%</div><div class="badges"><span class="badge" style="background:var(--b-emb-bg);color:var(--b-emb-fg)">embed</span></div></div>
+          <div class="stage"><div class="stage-n">41</div><div class="stage-name">Recall@1</div><div class="stage-desc">Dropout-view CDT retrieval — individual identity.</div><div class="stage-meta">≥70.4%</div><div class="badges"><span class="badge" style="background:var(--b-emb-bg);color:var(--b-emb-fg)">embed</span></div></div>
+          <div class="stage"><div class="stage-n">42</div><div class="stage-name">Config regression</div><div class="stage-desc">CDT → continuous PersonaConfig params.</div><div class="stage-meta">R² ≥ 0.79</div><div class="badges"><span class="badge" style="background:var(--b-pure-bg);color:var(--b-pure-fg)">pure</span></div></div>
+          <div class="stage"><div class="stage-n">43</div><div class="stage-name">Counterfactual</div><div class="stage-desc">Option A archetype redistribution · Option B generator re-run.</div><div class="stage-meta">cosine shift ≥0.27</div><div class="badges"><span class="badge" style="background:var(--b-edge-bg);color:var(--b-edge-fg)">edge</span></div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════ ENCODER SPECS ════════ -->
+  <section class="reveal" style="--i:4">
+    <div class="sec-head">
+      <span class="sec-num">02</span><h2>Encoder specifications</h2>
+      <span class="meta">all output EMBEDDING_DIM=128 · frozen at fusion time</span>
+    </div>
+    <div class="enc-grid">
+
+      <div class="enc"><div class="enc-head"><span class="enc-id">encoders/trace</span></div><div class="enc-name">Trace</div><div class="enc-arch">Transformer encoder over acquisition-event token sequences, mean-pooled across trials.</div>
+        <table>
+          <tr><td>input</td><td><span class="code">[trials, T_events, vocab]</span></td></tr>
+          <tr><td>objective</td><td>CE (strategy) + NT-Xent split-view</td></tr>
+          <tr><td>hyperparams</td><td><span class="code">batch=256 · lr=1e-3 · ep=50 · τ=0.07</span></td></tr>
+          <tr><td>recovery</td><td><span class="recov">~0.51</span> <span class="ink3">(1001)</span></td></tr>
+        </table>
+      </div>
+
+      <div class="enc"><div class="enc-head"><span class="enc-id">encoders/transaction</span></div><div class="enc-name">Transaction</div><div class="enc-arch">2-layer GRU (hidden=128) over sorted purchase sequence; next-brand-tier auxiliary.</div>
+        <table>
+          <tr><td>input</td><td><span class="code">[B, T_tx, TOKEN_DIM]</span></td></tr>
+          <tr><td>objective</td><td>CE + NT-Xent (split history)</td></tr>
+          <tr><td>hyperparams</td><td><span class="code">batch=64 · lr=5e-4 · ep=30 · λ=0.5</span></td></tr>
+          <tr><td>recovery</td><td><span class="recov">~0.37</span> <span class="ink3">(1001)</span></td></tr>
+        </table>
+      </div>
+
+      <div class="enc"><div class="enc-head"><span class="enc-id">encoders/psychographic</span></div><div class="enc-name">Psychographic</div><div class="enc-arch">MLP projector over the survey trait vector; supervised on persona.</div>
+        <table>
+          <tr><td>input</td><td><span class="code">[B, trait_dim]</span></td></tr>
+          <tr><td>objective</td><td>CE + NT-Xent</td></tr>
+          <tr><td>hyperparams</td><td><span class="code">ep=40</span></td></tr>
+          <tr><td>recovery</td><td><span class="recov">~0.68</span> <span class="ink3">(1001)</span></td></tr>
+        </table>
+      </div>
+
+      <div class="enc"><div class="enc-head"><span class="enc-id">encoders/text</span></div><div class="enc-name">Text</div><div class="enc-arch">Frozen sentence-transformer → trainable linear projection. Near-sufficient statistic.</div>
+        <table>
+          <tr><td>input</td><td><span class="code">narrative str → sent_emb</span></td></tr>
+          <tr><td>objective</td><td>CE (persona)</td></tr>
+          <tr><td>trainable</td><td>linear projection only</td></tr>
+          <tr><td>recovery</td><td><span class="recov">100%</span> <span class="ink3">(prototype)</span></td></tr>
+        </table>
+      </div>
+
+      <div class="enc"><div class="enc-head"><span class="enc-id">encoders/clickstream</span></div><div class="enc-name">Clickstream</div><div class="enc-arch">Two-stage GRU: <span class="code">encode_session</span> per session → <span class="code">forward</span> aggregates to a customer embedding.</div>
+        <table>
+          <tr><td>input</td><td><span class="code">[N_sess, T_ev, 19]</span> · MAX_SESSIONS=50</td></tr>
+          <tr><td>objective</td><td>CE + NT-Xent (individual identity)</td></tr>
+          <tr><td>hyperparams</td><td><span class="code">batch=64 · lr=5e-4 · ep=30</span></td></tr>
+          <tr><td>recovery</td><td><span class="recov">0.52</span> <span class="ink3">0.23→0.52 after fso</span></td></tr>
+        </table>
+      </div>
+
+      <div class="enc"><div class="enc-head"><span class="enc-id">encoders/campaign</span></div><div class="enc-name">Campaign</div><div class="enc-arch">Single-stage Transformer over CLS-prepended campaign token sequence.</div>
+        <table>
+          <tr><td>input</td><td><span class="code">[B, S, 11]</span> · MAX_EVENTS=50</td></tr>
+          <tr><td>model</td><td><span class="code">d_model=32 · 2 heads · 2 layers</span></td></tr>
+          <tr><td>objective</td><td>CE + NT-Xent (individual identity)</td></tr>
+          <tr><td>recovery</td><td><span class="recov">0.71</span></td></tr>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════ FUSION INTERNALS ════════ -->
+  <section class="reveal" style="--i:5">
+    <div class="sec-head">
+      <span class="sec-num">03</span><h2>Fusion internals</h2>
+      <span class="meta">fusion/meta_learner.py · LateFusionMetaLearner</span>
+    </div>
+    <div class="fusion-wrap">
+      <div class="panel-box">
+        <div class="eyebrow" style="margin-bottom:10px">forward path · all four steps live inside LateFusionMetaLearner</div>
+        <p class="prose">Frozen per-modality embeddings are read from the cache. The learned <strong>MISSING</strong> vector replaces any structurally absent slot (the 750/1000 consumers without traces — distinct from training-time dropout), then the slots are concatenated into one <span class="mono">[B, n×128]</span> vector. A two-layer compressor (LayerNorm → GELU → dropout) squeezes the redundant cross-modal signal down to the <strong>128-dim CDT embedding</strong>. A separate linear head emits the 7-class archetype logits, but only as a <em>CE training proxy</em> — it is discarded at inference. Individual identity is taught not by that head but by the NT-Xent term (right), which pulls two dropout views of the same consumer together.</p>
+        <div class="mlp-chain">
+          <div class="mlp-step"><span class="dim">[B, n×128]</span><span class="op">concat (n modalities, MISSING-filled)</span><span class="act">cat</span></div>
+          <div class="down-arrow">↓ Linear</div>
+          <div class="mlp-step"><span class="dim">[B, 256]</span><span class="op">fc1 · hidden_dim</span><span class="act">LayerNorm · GELU · drop 0.2</span></div>
+          <div class="down-arrow">↓ Linear</div>
+          <div class="mlp-step"><span class="dim">[B, 128]</span><span class="op">fc2 · CDT embedding</span><span class="act">LayerNorm · GELU · drop 0.1</span></div>
+          <div class="down-arrow">↓ Linear (auxiliary)</div>
+          <div class="mlp-step"><span class="dim">[B, 7]</span><span class="op">classifier · archetype CE head</span><span class="act">train proxy</span></div>
+        </div>
+        <div class="caption">All four boxes above are members of <span class="mono">LateFusionMetaLearner</span>: concat + MISSING are pre-MLP, fc1/fc2 are the compressor, classifier is the auxiliary CE head. <span class="mono">forward_with_embedding()</span> returns only the fc2 output (the CDT); the classifier is a training-time signal source, never shipped.</div>
+        <div class="callout">
+          <div class="ct">Runtime guard · bead hcx</div>
+          <pre>_MODALITIES = [k for k in embeddings
+              if k not in ("labels", "participant_ids")]
+assert n_modalities == len(encoders)
+assert stacked.shape[1:] == (n_modalities, 128)</pre>
+        </div>
+      </div>
+
+      <div class="panel-box">
+        <div class="eyebrow" style="margin-bottom:12px">multi-task objective</div>
+        <div class="loss-eq">
+<span class="c"># two dropout-augmented views of the same participant</span>
+total = <span class="k">CE</span>(logits, archetype) <br>
+      + <span class="k">λ</span> · <span class="k">NT-Xent</span>(view_a, view_b; <span class="k">τ</span>)
+<span class="c"># λ = 0.5   τ = 0.07</span>
+<span class="c"># dropout p = 0.2 per modality (augmentation)</span>
+<span class="c"># MISSING handles structural absence ≠ dropout</span>
+        </div>
+        <table style="width:100%; border-collapse:collapse; margin-top:16px; font-size:12px">
+          <tr><td style="font-family:var(--f-mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink_3);padding:5px 8px 5px 0">cache</td><td style="color:var(--ink_2);padding:5px 0"><span class="code">models/fusion_embeddings_cache.pt</span> — mtime-invalidated vs checkpoints</td></tr>
+          <tr><td style="font-family:var(--f-mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink_3);padding:5px 8px 5px 0;border-top:1px solid var(--rule)">loader</td><td style="color:var(--ink_2);padding:5px 0;border-top:1px solid var(--rule)"><span class="code">load_encoders(modalities=…)</span> — drops <span class="code">text</span> when narratives empty (dry-run)</td></tr>
+          <tr><td style="font-family:var(--f-mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink_3);padding:5px 8px 5px 0;border-top:1px solid var(--rule)">result</td><td style="color:var(--ink_2);padding:5px 0;border-top:1px solid var(--rule)">5-mod dry run · <strong>95.0%</strong> archetype recovery</td></tr>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════ DATA CONTRACT ════════ -->
+  <section class="reveal" style="--i:6">
+    <div class="sec-head">
+      <span class="sec-num">04</span><h2>Data contract · the join key</h2>
+      <span class="meta">schemas/ — the stable interface between every module</span>
+    </div>
+    <div class="contract">
+      <div class="mod"><div class="m-name">trace</div><div class="m-key">participant_id</div></div>
+      <div class="mod"><div class="m-name">transaction</div><div class="m-key">participant_id</div></div>
+      <div class="mod"><div class="m-name">psychographic</div><div class="m-key">participant_id</div></div>
+      <div class="mod"><div class="m-name">narrative</div><div class="m-key">participant_id</div></div>
+      <div class="mod"><div class="m-name">clickstream</div><div class="m-key">participant_id + customer_id</div></div>
+      <div class="mod"><div class="m-name">campaign</div><div class="m-key">participant_id + customer_id</div></div>
+    </div>
+    <div class="join-note">
+      <strong>All modalities join on <code>participant_id</code></strong> (e.g. <code>price_lex_0042</code>) — the individual consumer. The two newest modalities (bead <code>1it</code>) also keep <code>customer_id = PersonaConfig.persona_id</code> (the archetype slug) for anonymous grouping; encoders and fusion group by <code>participant_id</code>, never <code>customer_id</code>. Before <code>1it</code>, clickstream/campaign keyed only on the archetype id — collapsing every participant in an archetype to one record and making individual-level fusion impossible.
+    </div>
+  </section>
+
+  <!-- ════════ APPLICATION ADD-ONS ════════ -->
+  <section class="reveal" style="--i:7">
+    <div class="sec-head">
+      <span class="sec-num">05</span><h2>Application add-ons — real business scenarios</h2>
+      <span class="meta">applications/ · proposed · none committed · see new-capabilities.md</span>
+    </div>
+    <p class="prose">The CDT answers <em>"who is this person?"</em>. The capabilities below extend it toward <em>"what will this person do?"</em> — predicting choices, ranking products, simulating market response, flagging churn. Each is a thin trained head that <strong>consumes the frozen 128-dim CDT embedding</strong>; encoders and fusion are never modified. None are built yet — <span class="mono">applications/</span> is created lazily by the first implementation bead.</p>
+    <div class="cap-grid">
+      <div class="cap" style="--cc:var(--g-strategy)"><div class="cap-head"><span class="cap-code">P0</span><span class="cap-name">Schema foundation</span></div><div class="cap-desc">Product catalogue + a preference-driven choice model coupled to the acquisition trace. The critical path — gates M1 / L2 / M2. Today choices are <span class="mono">rng.choice(alts)</span>, independent of behaviour.</div><div class="cap-meta"><span class="cap-status" style="color:var(--g-strategy)">high · critical path</span><span class="badge" style="background:var(--b-pure-bg);color:var(--b-pure-fg)">schema+gen</span></div></div>
+
+      <div class="cap" style="--cc:var(--g-generation)"><div class="cap-head"><span class="cap-code">L1</span><span class="cap-name">Churn / defection</span></div><div class="cap-desc">Churn head over the CDT, benchmarked against an RFM baseline. Viable <strong>without</strong> the product model — operates purely on the embedding. Scenario: retention / win-back targeting.</div><div class="cap-meta"><span class="cap-status" style="color:var(--g-generation)">low</span><span class="badge" style="background:var(--b-emb-bg);color:var(--b-emb-fg)">embed</span></div></div>
+
+      <div class="cap" style="--cc:var(--g-state)"><div class="cap-head"><span class="cap-code">M1</span><span class="cap-name">Choice prediction</span></div><div class="cap-desc">Two-tower head — CDT tower × product tower → chosen-alternative probability. The primary product-level predictor. Needs P0. Scenario: "will they pick this?"</div><div class="cap-meta"><span class="cap-status" style="color:var(--g-state)">medium</span><span class="badge" style="background:var(--b-emb-bg);color:var(--b-emb-fg)">embed</span></div></div>
+
+      <div class="cap" style="--cc:var(--g-graph)"><div class="cap-head"><span class="cap-code">L2</span><span class="cap-name">Personalised ranking</span></div><div class="cap-desc">Thin wrapper over M1 — sorts a candidate product set by predicted choice probability. Scenario: recommendation / next-best-action.</div><div class="cap-meta"><span class="cap-status" style="color:var(--g-graph)">low* · needs M1</span><span class="badge" style="background:var(--b-emb-bg);color:var(--b-emb-fg)">embed</span></div></div>
+
+      <div class="cap" style="--cc:var(--g-persist)"><div class="cap-head"><span class="cap-code">M2</span><span class="cap-name">Market demand sim</span></div><div class="cap-desc">Aggregates M1 over a MarketState to simulate counterfactual demand curves. Validated against Option-B generator re-runs. Scenario: pricing / assortment what-if.</div><div class="cap-meta"><span class="cap-status" style="color:var(--g-persist)">medium</span><span class="badge" style="background:var(--b-edge-bg);color:var(--b-edge-fg)">edge</span></div></div>
+
+      <div class="cap" style="--cc:var(--g-intake)"><div class="cap-head"><span class="cap-code">H1</span><span class="cap-name">Temporal dynamics</span></div><div class="cap-desc">Sequential CDT — lets the embedding evolve over time for drift detection and early-warning signals. No product model needed; the largest architecture change. Scenario: behaviour shift monitoring.</div><div class="cap-meta"><span class="cap-status" style="color:var(--g-intake)">high</span><span class="badge" style="background:var(--b-pure-bg);color:var(--b-pure-fg)">architecture</span></div></div>
+    </div>
+    <div class="cache-note"><span class="tag">CACHE</span><span>One-shot export <span class="mono">applications/_cache/cdt_embeddings.parquet</span> — <span class="mono">(participant_id, session_id → 128-float cdt)</span>. Every head reads the frozen CDT from this cache; none recompute it or retrain fusion.</span></div>
+    <div class="join-note" style="margin-top:14px"><strong>Boundary invariant:</strong> <code>applications/</code> imports only the frozen fusion meta-learner + <code>EMBEDDING_DIM</code> from <code>schemas/</code>, and may import <code>Product</code> / <code>ChoiceSet</code> / <code>MarketState</code>. It never touches encoder or fusion <em>training</em> code. Choices that need a product model (M1/L2/M2) are blocked until P0 lands; churn (L1) and temporal (H1) are viable on the CDT alone.</div>
+  </section>
+
+  <!-- ════════ LEGEND / FOOTER ════════ -->
+  <div class="legend">
+    <div class="legend-grp"><span class="sw" style="background:var(--g-intake)"></span>generative root</div>
+    <div class="legend-grp"><span class="sw" style="background:var(--g-graph)"></span>generators</div>
+    <div class="legend-grp"><span class="sw" style="background:var(--g-state)"></span>encoders</div>
+    <div class="legend-grp"><span class="sw" style="background:var(--g-strategy)"></span>fusion</div>
+    <div class="legend-grp"><span class="sw" style="background:var(--g-generation)"></span>evaluation</div>
+    <div class="legend-grp" style="margin-left:auto"><span class="badge" style="background:var(--b-pure-bg);color:var(--b-pure-fg)">pure</span> computation</div>
+    <div class="legend-grp"><span class="badge" style="background:var(--b-emb-bg);color:var(--b-emb-fg)">embed</span> vector op</div>
+    <div class="legend-grp"><span class="badge" style="background:var(--b-llm-bg);color:var(--b-llm-fg)">llm</span> model call</div>
+    <div class="legend-grp"><span class="badge" style="background:var(--b-edge-bg);color:var(--b-edge-fg)">edge</span> relationship</div>
+  </div>
+  <div class="foot">
+    <span>customer-data-fusion · consumer digital twin · schema-update epic</span>
+    <span>branch feature/1it-thread-participant-id · 2026-06-14</span>
+  </div>
+
+</div>
+</body>
+</html>
