@@ -29,6 +29,10 @@ import sys
 import time
 from pathlib import Path
 
+# Run as `python scripts/generate_missing_narratives.py` from repo root without
+# needing PYTHONPATH=. (project modules live at the repo root, not in scripts/).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from generator.persona_sampler import sample_persona
 from generator.text_generator import generate_narrative
 from schemas.text import PersonaNarrative
