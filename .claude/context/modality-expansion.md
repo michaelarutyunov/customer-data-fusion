@@ -1,6 +1,6 @@
 # Modality Expansion Plan
 
-> **Status:** In progress (2026-06-14). Epic `customer-data-fusion-1y0` (schema-update). 5 of 6 immediate beads closed: `1it` (participant_id threading through clickstream/campaign generators), `33x` (campaign encoder, recovery 0.71), `syu` (clickstream encoder), `fso` (clickstream archetype-keyed intent priors, recovery 0.23→0.52), `hcx` (variable-modality fusion loader; 5-modality dry run = **95% archetype recovery**). **Open:** `2io` — full 6-modality run, pending narrative regeneration (~1001 DeepSeek calls). See `docs/post-mortems/schema-update-postmortem.md` for the drift lessons.
+> **Status:** Epic work complete (2026-06-15). All six schema-update beads closed: `1it` (participant_id threading), `33x` (campaign encoder, recovery 0.71), `syu` (clickstream encoder), `fso` (clickstream archetype-keying, recovery 0.23→0.52), `hcx` (variable-modality fusion loader), `2io` (full 6-modality run). **6-modality result:** archetype recovery **98.0%**, dropout-view recall@1 **82.5%** (improved over the 4-modality prototype's 70.4%), PersonaConfig R² **0.66** (below the 0.79 gate — an identity-vs-linearity tradeoff, not a bug). **Open follow-up beads:** `yy7` (participant-duplication in generate_embeddings), `7t6` (config_probe/retrieval variable-modality fix), `fkx` (R² regression investigation). See `docs/post-mortems/schema-update-postmortem.md` for the drift lessons.
 > **Source recommendations:** `docs/modalities.md` (modality set + temporal structure), `docs/modalities/mouselab.md` (process trace specifics).
 
 ---

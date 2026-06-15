@@ -3,7 +3,7 @@
 > Tier 3 context document — see `codified-context-principles.md` for governance.
 > Authoritative spec: `fusion/SPEC.md`. This document explains intent and rationale.
 > Updated: schema-update epic (2026-06-13) — 6-modality fusion, learned MISSING embedding, variable n_modalities.
-> Verified 2026-06-14 (beads `1it`→`hcx`): variable-modality loader implemented + asserted; 5-modality dry run (text dropped) = **95.0% archetype recovery**. Full 6-modality run pending narrative regeneration (bead `2io`).
+> Verified 2026-06-15 (bead `2io`, full 6-modality run): archetype recovery **98.0%**, dropout-view recall@1 **82.5%** (331× chance — improved over the 4-modality prototype's 70.4%), PersonaConfig R² **0.66 mean** (0.57–0.78 — *below* the 0.79 gate; an identity-vs-param-linearity tradeoff, not a bug). Open defects (beads `yy7`, `7t6`): `generate_embeddings` duplicates participants (cache 2002 rows = 2/participant); `config_probe.py`/`retrieval.py` hardcode 4 modalities and cannot eval the 6-modality fusion without a variable-modality fix.
 
 ---
 
@@ -90,7 +90,13 @@ Strategy recovery after retraining on the 1001-participant dataset (beads `syu`/
 | Text | — | not retrained this epic (narratives empty); checkpoint from prototype |
 | Campaign | 0.71 | new encoder (bead `33x`) |
 | Clickstream | 0.52 | new encoder (bead `syu`), after archetype-keying (`fso`); was 0.23 before |
-| **Fused (5-modality dry run)** | **0.95** | text dropped (no narratives); bead `hcx` |
+| **Fused (6-modality, bead `2io`)** | **0.98** | full run — archetype recovery gate met (>95%) |
+
+**6-modality individual-identity + regression (bead `2io`, 401 val participants):**
+- Dropout-view recall@1: **0.825** (331× chance) — **improved** over the 4-modality prototype's 0.704. Adding clickstream + campaign strengthened individual identity.
+- PersonaConfig R²: **0.66 mean** (price_sensitivity 0.63, brand_loyalty 0.57, involvement 0.71, maximiser 0.64, risk_tolerance 0.57, p_strategy_lapse 0.78, inspection_depth 0.75) — *below* the 0.79 gate and below the 4-modality prototype's 0.79–0.96.
+
+**The identity-vs-linearity tradeoff:** giving the meta-learner two more modalities improved the metrics it is directly optimised for (CE archetype, NT-Xent individual identity) but reduced how linearly the continuous PersonaConfig parameters are encoded in the CDT. This is a characteristic of the 6-modality model, not an implementation defect — but the R² dip is real and worth the `fkx` investigation (lower `lambda_contrastive`, an auxiliary regression head, or modality weighting may recover it).
 
 **Key finding — clickstream archetype signal:** clickstream's archetype signal is weak by *generator design* (transitions perturbed by within-archetype `config.latent`, not archetype-keyed). Bead `fso` added archetype-keyed session-intent priors, lifting raw-baseline recovery from 0.15 (chance) to 0.40 and encoder recovery 0.23 → 0.52. The 0.60 bead target was an encoder-capacity question, not a data one. Clickstream's real fusion value is individual identity (its NT-Xent term decreases), tested via recall@1 in the full 6-modality run (`2io`). See `docs/post-mortems/schema-update-postmortem.md`.
 

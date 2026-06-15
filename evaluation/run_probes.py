@@ -45,6 +45,17 @@ logger = logging.getLogger(__name__)
 DATA_DIR = Path("data/synthetic")
 
 
+def _record_from_line(schema, line: str):
+    """Construct ``schema`` from a JSONL line, dropping metadata fields the
+    dataclass doesn't model (e.g. the generator's temporal ``month`` field).
+
+    Guards against the recurring ``TypeError: unexpected keyword argument
+    'month'`` when generator records are loaded into immutable schema dataclasses.
+    """
+    data = json.loads(line)
+    return schema(**{k: v for k, v in data.items() if k in schema.__dataclass_fields__})
+
+
 def probe_with_sklearn(
     embeddings: np.ndarray,
     labels: np.ndarray,
@@ -97,7 +108,7 @@ def probe_trace(device: str = "cpu") -> dict:
     trials_path = DATA_DIR / "trials.jsonl"
 
     events = [
-        AcquisitionEvent(**json.loads(line))
+        _record_from_line(AcquisitionEvent, line)
         for line in traces_path.read_text().strip().split("\n")
         if line.strip()
     ]
@@ -105,7 +116,7 @@ def probe_trace(device: str = "cpu") -> dict:
     for line in trials_path.read_text().strip().split("\n"):
         if not line.strip():
             continue
-        r = TrialRecord(**json.loads(line))
+        r = _record_from_line(TrialRecord, line)
         trials[r.trial_id] = r
 
     # Group events by trial
@@ -253,7 +264,7 @@ def probe_transaction(device: str = "cpu") -> dict:
     for line in psycho_path.read_text().strip().split("\n"):
         if not line.strip():
             continue
-        p = PsychographicVector(**json.loads(line))
+        p = _record_from_line(PsychographicVector, line)
         price_consciousness_map[p.participant_id] = p.price_consciousness
 
     mean_prices: list[float] = []
@@ -298,7 +309,7 @@ def probe_text(device: str = "cpu") -> dict:
     # Load data
     narratives_path = DATA_DIR / "narratives.jsonl"
     narratives = [
-        PersonaNarrative(**json.loads(line))
+        _record_from_line(PersonaNarrative, line)
         for line in narratives_path.read_text().strip().split("\n")
         if line.strip()
     ]
@@ -373,7 +384,7 @@ def probe_psychographic(device: str = "cpu") -> dict:
     for line in psycho_path.read_text().strip().split("\n"):
         if not line.strip():
             continue
-        psych_records.append(PsychographicVector(**json.loads(line)))
+        psych_records.append(_record_from_line(PsychographicVector, line))
     logger.info("Loaded %d psychographic records", len(psych_records))
 
     # Train encoder
