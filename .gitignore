@@ -231,3 +231,6 @@ mlruns/
 
 # Claude files
 .claude/
+
+# Serena MCP local tooling cache (machine-specific, regenerable)
+.serena/

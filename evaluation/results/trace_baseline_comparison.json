@@ -1,0 +1,31 @@
+{
+  "engineered_features": {
+    "accuracy": 0.6,
+    "macro_f1": 0.5476190476190476,
+    "recall_at_1": 0.4,
+    "n_customers": 50,
+    "n_features": 14
+  },
+  "transformer_placeholder": {
+    "note": "Fill with Transformer trace encoder results after Phase 4b retrain",
+    "accuracy": null,
+    "macro_f1": null,
+    "recall_at_1": null
+  },
+  "feature_names": [
+    "payne_index_mean",
+    "prop_cells_mean",
+    "mean_dwell_mean",
+    "dwell_share_price_mean",
+    "dwell_share_brand_mean",
+    "reinspection_rate_mean",
+    "n_events_mean",
+    "payne_index_std",
+    "prop_cells_std",
+    "mean_dwell_std",
+    "dwell_share_price_std",
+    "dwell_share_brand_std",
+    "reinspection_rate_std",
+    "n_events_std"
+  ]
+}

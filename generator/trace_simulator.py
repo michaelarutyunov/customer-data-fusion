@@ -106,8 +106,8 @@ _EBA_ELIMINATION_THRESHOLD = 0.60  # fraction of alternatives eliminated per att
 
 
 # Base logit bonus for the archetype's primary strategy. At z=0 this gives the
-# primary strategy ~75% weight while allowing 25% individual variation from the
-# z-derived logits. The z logits can override this when |z| is large (>1.5).
+# primary strategy ~95% weight while allowing individual variation from the
+# z-derived logits. The z logits can override this when |z| is large (>2.0).
 _PRIMARY_STRATEGY_LOGIT_BONUS = 5.0
 
 
@@ -125,8 +125,8 @@ def _compute_strategy_mixture(
             -2.0 * z.thoroughness - 1.0 * z.search_orientation + 1.5 * z.impulsivity, # lexicographic
             1.0 * z.impulsivity                                                       # random
         ]
-    A bonus of 3.0 is added to the primary strategy's logit so that at
-    archetype-mean z (all zeros), the primary strategy dominates (~75% weight).
+    A bonus is added to the primary strategy's logit so that at archetype-mean
+    z (all zeros), the primary strategy dominates (~95% weight).
     If primary_strategy is not in the mixture (e.g. AFFECT_HEURISTIC), it is
     mapped to its closest mixture equivalent via _PRIMARY_TO_MIXTURE.
     Positive thoroughness shifts toward compensatory; negative shifts toward
@@ -515,10 +515,19 @@ def _simulate_elimination_by_aspects(
         if len(remaining_alts) <= 1:
             break
 
-        # Inspect all remaining alternatives on this attribute (dimensional scan)
-        alt_order = list(remaining_alts)
-        rng.shuffle(alt_order)
-        for alt in alt_order:
+        # Early stopping: with few remaining alternatives, sometimes stop
+        if len(remaining_alts) <= 2 and rng.random() < 0.5:
+            break
+
+        # Inspect a subset of remaining alternatives (not all) to control prop_cells
+        # Sample min(len(remaining_alts), ceil(len(remaining_alts)*0.8)) alternatives
+        n_inspect = max(
+            1, min(len(remaining_alts), int(len(remaining_alts) * 0.8 + 0.5))
+        )
+        inspect_alts = list(remaining_alts)
+        rng.shuffle(inspect_alts)
+        inspect_alts = inspect_alts[:n_inspect]
+        for alt in inspect_alts:
             sequence.append((alt, attr))
 
         # Eliminate a fraction of alternatives (those with worst values)
