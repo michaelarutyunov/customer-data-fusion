@@ -61,10 +61,11 @@ def _load_cache(cache_path: Path) -> dict:
 
 
 def _load_fusion_model(checkpoint_path: Path) -> LateFusionMetaLearner:
-    model = LateFusionMetaLearner()
-    model.load_state_dict(
-        torch.load(checkpoint_path, map_location="cpu", weights_only=True)
-    )
+    state = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+    # Infer n_modalities from fc1 input dim (input_dim = n_modalities * 128).
+    n_modalities = state["fc1.weight"].shape[1] // 128
+    model = LateFusionMetaLearner(n_modalities=n_modalities)
+    model.load_state_dict(state)
     model.eval()
     return model
 
@@ -79,15 +80,17 @@ def _load_participant_configs(path: Path) -> dict[str, dict]:
     return configs
 
 
+def _cache_modalities(cache: dict) -> list[str]:
+    """Modality tensor keys in the cache (excludes 'labels'/'participant_ids')."""
+    return [m for m in cache if m not in ("labels", "participant_ids")]
+
+
 def _cdt_embeddings(
     cache: dict,
     model: LateFusionMetaLearner,
 ) -> torch.Tensor:
-    embs = [
-        F.normalize(cache[m], dim=-1)
-        for m in ["trace", "transaction", "text", "psychographic"]
-    ]
-    fusion_input = torch.cat(embs, dim=-1)  # type: ignore[reportPrivateImportUsage]
+    embs = [F.normalize(cache[m], dim=-1) for m in _cache_modalities(cache)]
+    fusion_input = torch.cat(embs, dim=-1)  # [N, n_modalities * 128]
     with torch.no_grad():
         return model.embed(fusion_input)
 
@@ -123,13 +126,9 @@ def probe(
 
     # Build embedding arrays per modality
     cdt_embs = _cdt_embeddings(cache, model).numpy()
-    embedding_arrays: dict[str, np.ndarray] = {
-        "fused": cdt_embs,
-        "trace": cache["trace"].numpy(),
-        "transaction": cache["transaction"].numpy(),
-        "text": cache["text"].numpy(),
-        "psychographic": cache["psychographic"].numpy(),
-    }
+    embedding_arrays: dict[str, np.ndarray] = {"fused": cdt_embs}
+    for m in _cache_modalities(cache):
+        embedding_arrays[m] = cache[m].numpy()
 
     # Train/val split: same participant_ids ordering used in fusion training
     # Replicate split_participants(seed=42) logic: first 80% train, last 20% val

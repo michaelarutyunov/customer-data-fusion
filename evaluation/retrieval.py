@@ -45,10 +45,11 @@ def _load_cache(cache_path: Path) -> dict:
 
 
 def _load_fusion_model(checkpoint_path: Path) -> LateFusionMetaLearner:
-    model = LateFusionMetaLearner()
-    model.load_state_dict(
-        torch.load(checkpoint_path, map_location="cpu", weights_only=True)
-    )
+    state = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+    # Infer n_modalities from fc1 input dim (input_dim = n_modalities * 128).
+    n_modalities = state["fc1.weight"].shape[1] // 128
+    model = LateFusionMetaLearner(n_modalities=n_modalities)
+    model.load_state_dict(state)
     model.eval()
     return model
 
@@ -110,15 +111,17 @@ def _per_archetype_recall_at_1(
     return result
 
 
+def _cache_modalities(cache: dict) -> list[str]:
+    return [m for m in cache if m not in ("labels", "participant_ids")]
+
+
 def _cdt_embeddings(
     cache: dict[str, torch.Tensor],
     model: LateFusionMetaLearner,
 ) -> torch.Tensor:
     """Compute CDT embeddings from cached single-modality embeddings."""
-    embs = [F.normalize(cache[m], dim=-1) for m in MODALITIES]
-    fusion_input = torch.cat(
-        embs, dim=-1
-    )  # [N, 512]  # type: ignore[reportPrivateImportUsage]
+    embs = [F.normalize(cache[m], dim=-1) for m in _cache_modalities(cache)]
+    fusion_input = torch.cat(embs, dim=-1)  # [N, n_modalities * 128]
     with torch.no_grad():
         cdt = model.embed(fusion_input)  # [N, 128]
     return cdt
@@ -146,7 +149,7 @@ def evaluate(
 
     # ── (A) CDT-vs-single ────────────────────────────────────────────────────
     cdt_vs_single: dict[str, dict] = {}
-    for modality in MODALITIES:
+    for modality in _cache_modalities(cache):
         key_embs = cache[modality]
         r1 = _recall_at_k(cdt_embs, key_embs, labels, k=1)
         r10 = _recall_at_k(cdt_embs, key_embs, labels, k=10)

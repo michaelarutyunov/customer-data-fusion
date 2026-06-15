@@ -216,6 +216,18 @@ def generate_embeddings(
     from schemas.trace import AcquisitionEvent, TrialRecord
     from schemas.transaction import TransactionRecord
 
+    # Deduplicate psychographics to one row per participant (bead yy7). The file
+    # carries 2 fieldings/participant (months 1 & 7); keep the month-1 baseline so
+    # the cache holds exactly one embedding per participant (previously 2x dup'd).
+    _baseline: dict[str, dict] = {}
+    for _p in psychographics:
+        _pid = _p["participant_id"]
+        if _pid not in _baseline or _p.get("month", 99) < _baseline[_pid].get(
+            "month", 99
+        ):
+            _baseline[_pid] = _p
+    psychographics = list(_baseline.values())
+
     n_participants = len(psychographics)
 
     # Dynamic embeddings dict — one zero tensor per loaded modality, plus the
