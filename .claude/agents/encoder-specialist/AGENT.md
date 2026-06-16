@@ -162,6 +162,7 @@ Note: `temperature` and `aux_weight` are no longer relevant — the objective is
 - Never use classification head accuracy as primary metric — use logistic regression probe
 - Always log to MLflow before closing a training task
 - Always save encoder weights separately from classification heads
+- `train()` must accept `save_path: Path | None = None` (defaulting to `CHECKPOINT_PATHS[...]`); integration tests must pass a `tmp_path`-based `save_path`. Never let a test write to `models/*.pt`.
 
 ## Anti-patterns
 
@@ -214,6 +215,11 @@ Correct: CE + NT-Xent multi-task. CE maintains linear separability; NT-Xent adds
 Wrong: wrapping the feature dropout in an nn.Module for the psychographic augmentation
 Why wrong: inline mask generation (torch.rand_like) is simpler and avoids the subtle issue of torch.no_grad() interacting with nn.Dropout modules. The mask is not a learned parameter.
 Correct: compute masks inline in the training loop: `mask = (torch.rand_like(batch_x) > feat_dropout_p).float()`
+
+**Integration tests writing to real `models/*.pt`**
+Wrong: an integration test calling `train(...)` without overriding the save path
+Why wrong: `train()` defaults its save path to `CHECKPOINT_PATHS[modality]` (the real committed checkpoint). A 1-epoch smoke test then **overwrites the trained checkpoint with test fixtures**, silently. This corrupted `models/{transaction,psychographic,text}_encoder.pt` for sessions and manufactured a false "stale checkpoint" diagnosis (see `docs/post-mortems/test-isolation-postmortem.md`). The corruption is invisible — tests stay green; only `git status models/` reveals it.
+Correct: every `train()` takes `save_path: Path | None = None`; integration tests pass `save_path=tmp_path / "<encoder>.pt"`. trace and campaign already followed this; transaction/psychographic/text/clickstream were brought in line.
 
 ## Context Documents
 - `encoders/trace/SPEC.md` — trace encoder full specification

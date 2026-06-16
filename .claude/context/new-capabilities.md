@@ -517,7 +517,9 @@ Where `D` is the number of concrete product attributes from the Product schema.
 
 ### H1 — Temporal Dynamics (Sequential CDT)
 
-**Complexity: High**
+**Complexity: High** *(but see readiness note — effectively Low–Medium)*
+
+> **Readiness note (2026-06-16):** the data prerequisites below are **already built**, so H1 is effectively Low–Medium, not High. `PersonaConfig.month` exists; `persona_sampler.sample_temporal_trajectory()` emits 12 monthly snapshots with AR(1) drift + injected regime shifts; `participant_configs.jsonl` carries `drift_label`/`drift_month` (the recall@1≥0.80 ground truth); every modality is fielded monthly (trace/transaction/psychographic/clickstream/campaign all carry `month`); `evaluation/temporal_split.py` does months 1–8 train / 9–12 eval. Data uses `month`, not `session_id`/`wave_id` (naming only). What remains is a re-encode-per-wave script + a drift detector — not a generator change.
 
 **Description.** Treat the CDT embedding as a time series. Produce a sequence of embeddings per consumer across multiple data collection waves, enabling drift detection and trajectory prediction.
 

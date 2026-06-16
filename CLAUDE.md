@@ -189,6 +189,7 @@ Every bead that dispatches parallel sub-agents must include an explicit **Merge 
 | Post-prototype capabilities | `.claude/context/new-capabilities.md` |
 | Modality expansion plan | `.claude/context/modality-expansion.md` |
 | Schema-update post-mortem | `docs/post-mortems/schema-update-postmortem.md` |
+| Test-isolation post-mortem | `docs/post-mortems/test-isolation-postmortem.md` |
 
 ---
 
