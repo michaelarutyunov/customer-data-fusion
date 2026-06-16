@@ -18,8 +18,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import cast
 
 import joblib
+import numpy as np
 import pandas as pd
 import structlog
 from sklearn.linear_model import LogisticRegression
@@ -163,12 +165,15 @@ def train_drift_detector(
     # Evaluate Stage 1
     y_pred = classifier.predict(X_test)
 
-    report = classification_report(y_test, y_pred, output_dict=True)
+    report_dict = cast(
+        dict[str, dict[str, float]],
+        classification_report(y_test, y_pred, output_dict=True),
+    )
     cm = confusion_matrix(y_test, y_pred)
 
-    recall_drift = report["True"]["recall"]
-    precision_drift = report["True"]["precision"]
-    f1_drift = report["True"]["f1-score"]
+    recall_drift = report_dict["True"]["recall"]
+    precision_drift = report_dict["True"]["precision"]
+    f1_drift = report_dict["True"]["f1-score"]
 
     log.info(
         "drift_detector.stage1_metrics",
@@ -180,7 +185,7 @@ def train_drift_detector(
 
     # Prepare Stage 2 evaluation (drift month prediction)
     # Only evaluate on participants with drift_label=True
-    drift_mask = (y_test == True)
+    drift_mask: np.ndarray[bool] = y_test
     if drift_mask.sum() > 0:
         test_df = merged_df.iloc[test_idx]
         drift_df = test_df[drift_mask]
