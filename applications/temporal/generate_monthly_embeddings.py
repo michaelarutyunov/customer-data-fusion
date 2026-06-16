@@ -176,7 +176,9 @@ def _encode_month(
             if "event_type" not in rec:
                 continue
             if pid in pid_to_idx:
-                raw_by_pid_sid[pid][rec.get("session_id", "")].append(ClickstreamEvent(**rec))
+                # Filter to known dataclass fields to prevent injection
+                filtered_fields = {k: v for k, v in rec.items() if k in ClickstreamEvent.__dataclass_fields__}
+                raw_by_pid_sid[pid][rec.get("session_id", "")].append(ClickstreamEvent(**filtered_fields))
         for pid, sessions in raw_by_pid_sid.items():
             click_sessions_by_pid[pid] = [
                 sorted(s, key=lambda e: e.event_ts) for s in sessions.values()
@@ -187,7 +189,9 @@ def _encode_month(
         for rec in all_records["campaigns"]:
             pid = rec.get("participant_id", "")
             if pid in pid_to_idx:
-                campaign_events_by_pid[pid].append(CampaignEvent(**rec))
+                # Filter to known dataclass fields to prevent injection
+                filtered_fields = {k: v for k, v in rec.items() if k in CampaignEvent.__dataclass_fields__}
+                campaign_events_by_pid[pid].append(CampaignEvent(**filtered_fields))
         for pid in campaign_events_by_pid:
             campaign_events_by_pid[pid].sort(key=lambda e: e.sent_ts)
 
@@ -288,7 +292,9 @@ def _encode_month(
                 psycho = psychographic_by_pid.get(participant_id, {})
                 if psycho:
                     from encoders.psychographic.features import to_feature_vector
-                    psych_vector = to_feature_vector(PsychographicVector(**psycho))
+                    # Filter to known dataclass fields to prevent injection
+                    filtered_psycho = {k: v for k, v in psycho.items() if k in PsychographicVector.__dataclass_fields__}
+                    psych_vector = to_feature_vector(PsychographicVector(**filtered_psycho))
                     psych_emb = fusion_model.modality_encoders["psychographic"](psych_vector)
                     modality_embeddings.append(psych_emb)
                 else:
@@ -347,7 +353,7 @@ def _encode_month(
 
         # Pass through fusion model to get CDT embedding
         combined_b = combined.unsqueeze(0).to(device)
-        cdt_embedding = fusion_model.extract_cdt_embedding(combined_b)
+        logits, cdt_embedding = fusion_model.forward_with_embedding(combined_b)
         embedding = cdt_embedding.squeeze(0).cpu()
 
         embeddings.append(
