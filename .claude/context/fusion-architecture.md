@@ -127,6 +127,85 @@ Positive pairs: two forward passes of the same participant through the MLP, each
 
 ---
 
+## Temporal Limitations
+
+**Critical constraint:** The fusion meta-learner is trained for **identity stability**, not temporal sensitivity.
+
+### What the Model Captures
+
+**Identity (what it's trained for):**
+- "Who is this person?" — collapses within-participant variance
+- Same participant across months/sessions → similar embeddings
+- Robust to missing modalities (dropout augmentation)
+
+**Not temporality (what it's NOT trained for):**
+- "How is this person changing?" — would require preserving within-participant variance
+- Same participant at different times → different embeddings (does not happen)
+
+### Why Embeddings Don't Vary Over Time
+
+The NT-Xent loss explicitly teaches the model to ignore within-participant variance:
+
+```python
+# From fusion/train.py
+def nt_xent_fusion(emb_v1, emb_v2):
+    """
+    emb_v1[i] and emb_v2[i] are two dropout-augmented views of participant i.
+    Pushes them closer together → identity stability.
+    """
+```
+
+When you pass month 1, month 2, ..., month 12 data through frozen encoders:
+1. Encoders are frozen — they can't adapt to temporal variations
+2. Fusion was trained to collapse variance — treats month-to-month changes as noise
+3. Result: identical embeddings across all months (variance = 0.0)
+
+### Evidence from H1 Validation Failed (2026-06-16)
+
+H1 Temporal Dynamics attempted to detect regime shifts using monthly frozen embeddings. All 1002 participants produced identical embeddings across 12 months, making drift detection impossible.
+
+- Drift features: all 0.0 (dist_mean, dist_std, dist_max, dist_slope)
+- Stage 1 Recall: 0.000 (target ≥0.80)
+- Stage 1 Precision: 0.000 (target ≥0.60)
+
+**Root cause:** NT-Xent optimizes for identity, not temporality. See `docs/post-mortems/h1-temporal-postmortem.md` for full analysis.
+
+### Implications for Temporal Capabilities
+
+**What won't work with frozen fusion:**
+- ❌ Regime shift detection from monthly embeddings (H1)
+- ❌ Churn prediction from embedding trajectories
+- ❌ "How is this customer changing?" queries
+
+**What does work:**
+- ✅ "Who is this customer?" (individual identification)
+- ✅ "What archetype is this?" (classification)
+- ✅ "Which customers are similar?" (retrieval)
+
+### If You Need Temporal Capabilities
+
+Two options:
+
+**Option 1: Retrain fusion with temporal objective**
+- Replace NT-Xent with temporal contrastive loss
+- Positive pairs: (participant_i, month_t) with (participant_i, month_{t+1})
+- Preserves temporal variance while maintaining identity signal
+- Requires full retraining (affects all downstream dependencies)
+
+**Option 2: Separate temporal model**
+- Keep frozen embeddings as static features
+- Train GRU/Transformer on embedding sequences
+- Faster to implement, modular
+- Less elegant than fixing fusion at the source
+
+### Design Principle
+
+**Frozen models preserve what they were trained to capture.**
+
+Before using a frozen model for a new task, verify that its training objective is compatible with the task's requirements. If the model optimizes for property A (identity) but the task requires property B (temporality), you have a fundamental mismatch.
+
+---
+
 ## Evaluation Beyond Archetype Recovery
 
 The NT-Xent training objective explicitly optimises cross-view individual retrieval. The correct evaluation metric is **dropout-view CDT retrieval recall@1**: given two random modality-dropout views of the same participant, what fraction of the time does the correct participant rank #1 in a gallery of N participants?
