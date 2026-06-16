@@ -75,7 +75,6 @@ def evaluate_drift_detector(
 
     # Load models
     classifier = joblib.load(classifier_path)
-    month_estimator = joblib.load(month_estimator_path)
 
     # Stage 1 evaluation
     feature_cols = ["dist_mean", "dist_std", "dist_max", "dist_slope"]
@@ -99,9 +98,9 @@ def evaluate_drift_detector(
 
     # Extract metrics
     report = classification_report(y_drift, y_pred, output_dict=True)
-    recall_drift = report["True"]["recall"]
-    precision_drift = report["True"]["precision"]
-    f1_drift = report["True"]["f1-score"]
+    recall_drift = report["1"]["recall"]
+    precision_drift = report["1"]["precision"]
+    f1_drift = report["1"]["f1-score"]
 
     # Calibration curve
     prob_true, prob_pred = calibration_curve(y_drift, y_pred_proba, n_bins=10)
@@ -113,12 +112,12 @@ def evaluate_drift_detector(
         print(f"{i:2d}    {pred:.2f}        {true:.2f}      {n_samples:6d}")
 
     # Stage 2 evaluation (drift month)
-    drift_mask = y_drift == True
+    drift_mask = y_drift
     if drift_mask.sum() > 0:
         drift_df = merged_df[drift_mask]
 
-        y_drift_month_true = drift_df["drift_month"].values
-        y_drift_month_pred = drift_df["max_dist_month"].values
+        y_drift_month_true = drift_df["drift_month"].to_numpy()
+        y_drift_month_pred = drift_df["max_dist_month"].to_numpy()
 
         # Filter to valid predictions (6-10)
         valid_preds = []
@@ -130,7 +129,7 @@ def evaluate_drift_detector(
 
         if len(valid_preds) > 0:
             mae = mean_absolute_error(valid_trues, valid_preds)
-            print(f"\n=== Stage 2: Drift Month Estimation ===")
+            print("\n=== Stage 2: Drift Month Estimation ===")
             print(f"MAE: {mae:.3f} months (on {len(valid_preds)} valid predictions)")
 
             # Accuracy and ±1 tolerance
