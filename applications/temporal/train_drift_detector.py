@@ -180,7 +180,7 @@ def train_drift_detector(
 
     # Prepare Stage 2 evaluation (drift month prediction)
     # Only evaluate on participants with drift_label=True
-    drift_mask = y_test
+    drift_mask = (y_test == True)
     if drift_mask.sum() > 0:
         test_df = merged_df.iloc[test_idx]
         drift_df = test_df[drift_mask]
@@ -191,10 +191,25 @@ def train_drift_detector(
         y_drift_month_pred = drift_df["max_dist_month"].values
 
         # Collect all cases with ground truth drift_month
+        # Validate predictions are in [6, 10] as per spec
         valid_trues = []
+        invalid_preds = []
         for pred, true in zip(y_drift_month_pred, y_drift_month_true):
             if pd.notna(true):  # Only include cases with ground truth
-                valid_trues.append((pred, true))
+                # Validate prediction is in expected range [6, 10]
+                if 6 <= pred <= 10:
+                    valid_trues.append((pred, true))
+                else:
+                    invalid_preds.append((pred, true))
+
+        # Log invalid predictions
+        if invalid_preds:
+            log.warning(
+                "drift_detector.stage2_invalid_predictions",
+                n_invalid=len(invalid_preds),
+                n_total=len(y_drift_month_pred),
+                invalid_samples=[{"pred": p, "true": t} for p, t in invalid_preds[:5]],
+            )
 
         # Convert to arrays for MAE calculation
         if valid_trues:
@@ -206,11 +221,12 @@ def train_drift_detector(
                 "drift_detector.stage2_metrics",
                 mae=mae,
                 n_evaluated=len(valid_trues),
+                n_invalid=len(invalid_preds) if invalid_preds else 0,
                 n_total=len(y_drift_month_pred),
             )
         else:
             mae = None
-            log.warning("drift_detector.stage2_no_ground_truth_cases")
+            log.warning("drift_detector.stage2_no_valid_predictions")
     else:
         mae = None
         log.warning("drift_detector.stage2_no_drift_cases_in_test")
