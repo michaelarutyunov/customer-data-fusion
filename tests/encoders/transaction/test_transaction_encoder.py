@@ -27,7 +27,8 @@ from encoders.transaction.features import (
 )
 from encoders.transaction.model import NextBrandTierHead, TransactionEncoder
 from encoders.transaction.train import (
-    TransactionSequenceDataset,
+    MIN_TX_FOR_SPLIT,
+    SplitTransactionDataset,
     collate_fn,
     split_by_participant,
     train,
@@ -140,7 +141,7 @@ class TestTokenVector:
         record = _make_record()
         vec = vocab.to_token_vector(record)
         assert vec.shape == (TOKEN_DIM,)
-        assert vec.shape[0] == 20
+        assert vec.shape[0] == 26
 
     def test_token_vector_is_float(self) -> None:
         vocab = TxVocabulary()
@@ -152,32 +153,32 @@ class TestTokenVector:
         vocab = TxVocabulary()
         record = _make_record(price_paid_normalised=0.73)
         vec = vocab.to_token_vector(record)
-        # price is the 17th element (after 8+4+4 = 16 embedding dims)
-        assert abs(vec[16].item() - 0.73) < 1e-6
+        # price is at index 20 (after 8+4+4+4 = 20 embedding dims)
+        assert abs(vec[20].item() - 0.73) < 1e-6
 
     def test_on_promotion_true(self) -> None:
         vocab = TxVocabulary()
         record = _make_record(on_promotion=True)
         vec = vocab.to_token_vector(record)
-        assert vec[17].item() == 1.0
+        assert vec[22].item() == 1.0
 
     def test_on_promotion_false(self) -> None:
         vocab = TxVocabulary()
         record = _make_record(on_promotion=False)
         vec = vocab.to_token_vector(record)
-        assert vec[17].item() == 0.0
+        assert vec[22].item() == 0.0
 
     def test_quantity_norm_capped_at_one(self) -> None:
         vocab = TxVocabulary()
         record = _make_record(quantity=10)
         vec = vocab.to_token_vector(record)
-        assert vec[18].item() == 1.0
+        assert vec[24].item() == 1.0
 
     def test_quantity_norm_value_below_cap(self) -> None:
         vocab = TxVocabulary()
         record = _make_record(quantity=3)
         vec = vocab.to_token_vector(record)
-        assert abs(vec[18].item() - 0.6) < 1e-6
+        assert abs(vec[24].item() - 0.6) < 1e-6
 
     def test_recency_norm_today(self) -> None:
         """days_before_session=1 → recency ≈ 0.997"""
@@ -185,7 +186,7 @@ class TestTokenVector:
         record = _make_record(days_before_session=1)
         vec = vocab.to_token_vector(record)
         expected = 1.0 - 1.0 / 365.0
-        assert abs(vec[19].item() - expected) < 1e-6
+        assert abs(vec[25].item() - expected) < 1e-6
 
     def test_recency_norm_year_ago(self) -> None:
         """days_before_session=365 → recency ≈ 0.0"""
@@ -193,7 +194,7 @@ class TestTokenVector:
         record = _make_record(days_before_session=365)
         vec = vocab.to_token_vector(record)
         expected = 1.0 - 365.0 / 365.0
-        assert abs(vec[19].item() - expected) < 1e-6
+        assert abs(vec[25].item() - expected) < 1e-6
 
     def test_brand_tier_embedding_dimensions(self) -> None:
         """First 8 dims come from brand_tier embedding (dim=8)."""
@@ -216,6 +217,17 @@ class TestTokenVector:
         record = _make_record()
         vec = vocab.to_token_vector(record)
         assert vec[12:16].shape == (4,)
+
+    def test_payment_method_embedding_dimensions(self) -> None:
+        """Dims 16-19 come from payment_method embedding (dim=4).
+
+        Added in the schema-update epic (took TOKEN_DIM 20 → 26); kept as a
+        regression guard so a future layout change is visible here.
+        """
+        vocab = TxVocabulary()
+        record = _make_record()
+        vec = vocab.to_token_vector(record)
+        assert vec[16:20].shape == (4,)
 
     def test_different_brand_tiers_different_vectors(self) -> None:
         vocab = TxVocabulary()
@@ -400,82 +412,133 @@ class TestNextBrandTierHead:
 # ---------------------------------------------------------------------------
 
 
-class TestTransactionSequenceDataset:
-    """Tests for the dataset class."""
+class TestSplitTransactionDataset:
+    """Tests for SplitTransactionDataset (chronological split views for NT-Xent).
+
+    Each item is an 8-tuple:
+    (full_tokens, full_len, half1_tokens, half1_len, half2_tokens, half2_len,
+     persona_label, nt_xent_eligible). The dataset was refactored from a
+    next-brand-tier LM-shift contract during the schema-update epic; these
+    tests cover the current split-history contract.
+    """
 
     def test_dataset_length(self) -> None:
         records = _make_records_for_participant(
             "P001", n=10
         ) + _make_records_for_participant("P002", n=5)
         vocab = TxVocabulary()
-        ds = TransactionSequenceDataset(records, vocab)
-        # 2 participants
+        ds = SplitTransactionDataset(records, vocab)
+        # one item per participant
         assert len(ds) == 2
 
-    def test_item_shapes(self) -> None:
+    def test_item_is_eight_tuple(self) -> None:
         records = _make_records_for_participant("P001", n=10)
         vocab = TxVocabulary()
-        ds = TransactionSequenceDataset(records, vocab)
-        tokens, targets, length = ds[0]
-        # Input is t1..t9 (last excluded), so length = 9
-        assert tokens.shape == (9, TOKEN_DIM)
-        assert targets.shape == (9,)
-        assert length == 9
+        ds = SplitTransactionDataset(records, vocab)
+        assert len(ds[0]) == 8
 
-    def test_targets_are_brand_tier_indices(self) -> None:
-        tiers = ["premium", "mid", "value", "own_label"]
-        records = _make_records_for_participant("P001", n=5, brand_tiers=tiers)
+    def test_full_sequence_shape_and_length(self) -> None:
+        records = _make_records_for_participant("P001", n=10)
         vocab = TxVocabulary()
-        ds = TransactionSequenceDataset(records, vocab)
-        _, targets, _ = ds[0]
-        # Targets should be valid indices 0-3
-        assert targets.min().item() >= 0
-        assert targets.max().item() <= 3
+        ds = SplitTransactionDataset(records, vocab)
+        full_tokens, full_len, _h1, _h1l, _h2, _h2l, _label, _elig = ds[0]
+        # full sequence holds all 10 transactions (oldest-first, no LM-shift)
+        assert full_tokens.shape == (10, TOKEN_DIM)
+        assert full_len == 10
 
-    def test_single_transaction_participant(self) -> None:
-        """A participant with 1 transaction should still produce an item."""
-        records = [_make_record(participant_id="P001")]
+    def test_split_halves_partition_the_sequence(self) -> None:
+        records = _make_records_for_participant("P001", n=10)
         vocab = TxVocabulary()
-        ds = TransactionSequenceDataset(records, vocab)
+        ds = SplitTransactionDataset(records, vocab)
+        _ft, _fl, h1_tokens, h1_len, h2_tokens, h2_len, _label, _elig = ds[0]
+        # median split: 5 oldest + 5 most-recent
+        assert h1_tokens.shape == (5, TOKEN_DIM)
+        assert h1_len == 5
+        assert h2_tokens.shape == (5, TOKEN_DIM)
+        assert h2_len == 5
+
+    def test_persona_label_is_valid_archetype_index(self) -> None:
+        records = _make_records_for_participant("P001", n=5)
+        vocab = TxVocabulary()
+        ds = SplitTransactionDataset(records, vocab)
+        _ft, _fl, _h1, _h1l, _h2, _h2l, persona_label, _elig = ds[0]
+        assert 0 <= persona_label <= 6  # 7 archetypes
+
+    def test_eligible_above_threshold(self) -> None:
+        # n=10 >= MIN_TX_FOR_SPLIT → eligible for NT-Xent
+        records = _make_records_for_participant("P001", n=10)
+        vocab = TxVocabulary()
+        ds = SplitTransactionDataset(records, vocab)
+        eligible = ds[0][7]
+        assert eligible == (10 >= MIN_TX_FOR_SPLIT)
+        assert eligible is True
+
+    def test_not_eligible_below_threshold(self) -> None:
+        # n=3 < MIN_TX_FOR_SPLIT → not eligible; item still created (CE-only)
+        records = _make_records_for_participant("P001", n=3)
+        vocab = TxVocabulary()
+        ds = SplitTransactionDataset(records, vocab)
         assert len(ds) == 1
-        tokens, targets, length = ds[0]
-        assert length == 1
+        eligible = ds[0][7]
+        assert eligible == (3 >= MIN_TX_FOR_SPLIT)
+        assert eligible is False
 
     def test_max_seq_len_truncation(self) -> None:
         records = _make_records_for_participant("P001", n=100)
         vocab = TxVocabulary()
-        ds = TransactionSequenceDataset(records, vocab, max_seq_len=10)
-        tokens, targets, length = ds[0]
-        assert length == 9  # truncated to 10, input = 10-1 = 9
+        ds = SplitTransactionDataset(records, vocab, max_seq_len=10)
+        full_tokens, full_len, _h1, _h1l, _h2, _h2l, _label, _elig = ds[0]
+        assert full_tokens.shape[0] == 10
+        assert full_len == 10
 
 
 class TestCollateFn:
-    """Tests for the collation function."""
+    """Tests for the collation function (8-tuple items → padded tensors)."""
+
+    def test_collate_returns_eight_parts(self) -> None:
+        vocab = TxVocabulary()
+        records = _make_records_for_participant(
+            "P001", n=10
+        ) + _make_records_for_participant("P002", n=5)
+        ds = SplitTransactionDataset(records, vocab)
+        batch = [ds[0], ds[1]]
+        assert len(collate_fn(batch)) == 8
 
     def test_collate_shapes(self) -> None:
         vocab = TxVocabulary()
         records = _make_records_for_participant(
             "P001", n=10
         ) + _make_records_for_participant("P002", n=5)
-        ds = TransactionSequenceDataset(records, vocab)
+        ds = SplitTransactionDataset(records, vocab)
         batch = [ds[0], ds[1]]
-        tokens, targets, lengths = collate_fn(batch)
+        (
+            full_t,
+            full_l,
+            _h1_t,
+            _h1_l,
+            _h2_t,
+            _h2_l,
+            labels,
+            eligible,
+        ) = collate_fn(batch)
 
-        assert tokens.shape[0] == 2
-        assert tokens.shape[2] == TOKEN_DIM
-        assert lengths.shape == (2,)
+        assert full_t.shape[0] == 2
+        assert full_t.shape[2] == TOKEN_DIM
+        assert full_l.shape == (2,)
+        assert labels.shape == (2,)
+        assert len(eligible) == 2
 
-    def test_collate_sorted_by_descending_length(self) -> None:
+    def test_collate_sorted_by_descending_full_length(self) -> None:
         vocab = TxVocabulary()
         records = _make_records_for_participant(
             "P001", n=5
         ) + _make_records_for_participant("P002", n=10)
-        ds = TransactionSequenceDataset(records, vocab)
-        batch = [ds[0], ds[1]]  # P001=4 tokens, P002=9 tokens
-        tokens, _, lengths = collate_fn(batch)
+        ds = SplitTransactionDataset(records, vocab)
+        batch = [ds[0], ds[1]]
+        full_t, full_l, _h1_t, _h1_l, _h2_t, _h2_l, _labels, _elig = collate_fn(batch)
 
-        # After sorting, first should be longer
-        assert lengths[0] >= lengths[1]
+        # After sorting by descending full length, first should be longer
+        assert full_l[0] >= full_l[1]
 
 
 class TestSplitByParticipant:
@@ -521,7 +584,9 @@ class TestSplitByParticipant:
 class TestIntegration:
     """End-to-end integration: 1 epoch with tiny fixtures."""
 
-    def test_train_one_epoch_tiny(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_train_one_epoch_tiny(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("MLFLOW_ALLOW_FILE_STORE", "true")
         """Train for 1 epoch with 4 participants, 10 records each.
 
@@ -548,6 +613,7 @@ class TestIntegration:
             gru_layers=1,
             gru_dropout=0.0,
             projection_dim=16,
+            save_path=tmp_path / "tx_encoder.pt",
             device="cpu",
         )
 
@@ -570,7 +636,7 @@ class TestIntegration:
         assert embedding.shape == (1, EMBEDDING_DIM)
 
     def test_train_with_single_transaction_participants(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("MLFLOW_ALLOW_FILE_STORE", "true")
         """Edge case: participants with only 1 transaction should not crash."""
@@ -589,6 +655,7 @@ class TestIntegration:
             gru_layers=1,
             gru_dropout=0.0,
             projection_dim=16,
+            save_path=tmp_path / "tx_encoder.pt",
             device="cpu",
         )
         assert isinstance(encoder, TransactionEncoder)

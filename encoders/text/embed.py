@@ -370,6 +370,7 @@ def train(
     lambda_contrastive: float = 0.5,
     nt_xent_temperature: float = 0.07,
     noise_std: float = 0.01,
+    save_path: Optional[Path] = None,
 ) -> TextEncoder:
     """Train the text encoder projection layer with CE + NT-Xent multi-task objective.
 
@@ -559,7 +560,7 @@ def train(
         _train_loop()
 
     # Save checkpoint (only trainable parameters, not frozen sentence-transformer)
-    checkpoint_path = CHECKPOINT_PATHS["text"]
+    checkpoint_path = save_path if save_path is not None else CHECKPOINT_PATHS["text"]
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
     if best_trainable_state:
         torch.save(best_trainable_state, checkpoint_path)

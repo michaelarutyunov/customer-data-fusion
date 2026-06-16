@@ -373,18 +373,21 @@ class TestTrainingIntegration:
                 )
         return records
 
-    def test_train_one_epoch(self, tiny_dataset: list[PsychographicVector]) -> None:
+    def test_train_one_epoch(
+        self, tmp_path, tiny_dataset: list[PsychographicVector]
+    ) -> None:
         """Training for 1 epoch should complete without error and return a model."""
         model = train(
             records=tiny_dataset,
             n_epochs=1,
             batch_size=16,
             log_mlflow=False,
+            save_path=tmp_path / "psychographic_encoder.pt",
         )
         assert isinstance(model, PsychographicEncoder)
 
     def test_model_output_after_training(
-        self, tiny_dataset: list[PsychographicVector]
+        self, tmp_path, tiny_dataset: list[PsychographicVector]
     ) -> None:
         """After training, the model should produce valid embeddings."""
         model = train(
@@ -392,6 +395,7 @@ class TestTrainingIntegration:
             n_epochs=1,
             batch_size=16,
             log_mlflow=False,
+            save_path=tmp_path / "psychographic_encoder.pt",
         )
         model.eval()
         sample = to_feature_vector(make_psych()).unsqueeze(0)

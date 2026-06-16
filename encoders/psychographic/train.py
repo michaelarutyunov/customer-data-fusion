@@ -211,6 +211,7 @@ def train(
     lambda_contrastive: float = 0.5,
     nt_xent_temperature: float = 0.07,
     feat_dropout_p: float = 0.1,
+    save_path: Optional[Path] = None,
 ) -> PsychographicEncoder:
     """Train the psychographic encoder with CE + NT-Xent multi-task objective.
 
@@ -347,7 +348,11 @@ def train(
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
                 patience_counter = 0
-                checkpoint_path = CHECKPOINT_PATHS["psychographic"]
+                checkpoint_path = (
+                    save_path
+                    if save_path is not None
+                    else CHECKPOINT_PATHS["psychographic"]
+                )
                 checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
                 torch.save(model.state_dict(), checkpoint_path)
             else:
@@ -357,7 +362,9 @@ def train(
                     break
 
         # Restore best checkpoint
-        checkpoint_path = CHECKPOINT_PATHS["psychographic"]
+        checkpoint_path = (
+            save_path if save_path is not None else CHECKPOINT_PATHS["psychographic"]
+        )
         if checkpoint_path.exists():
             model.load_state_dict(
                 torch.load(checkpoint_path, map_location=device, weights_only=True)
@@ -397,7 +404,7 @@ def train(
     else:
         _train_loop()
 
-    print(f"Saved checkpoint to {CHECKPOINT_PATHS['psychographic']}")
+    print(f"Saved checkpoint to {save_path or CHECKPOINT_PATHS['psychographic']}")
     return model
 
 

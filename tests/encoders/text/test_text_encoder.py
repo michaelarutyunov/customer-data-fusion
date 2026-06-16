@@ -478,18 +478,21 @@ class TestTrainingIntegration:
                 )
         return records
 
-    def test_train_one_epoch(self, tiny_dataset: list[PersonaNarrative]) -> None:
+    def test_train_one_epoch(
+        self, tmp_path, tiny_dataset: list[PersonaNarrative]
+    ) -> None:
         """Training for 1 epoch should complete without error and return a model."""
         model = train(
             narratives=tiny_dataset,
             n_epochs=1,
             batch_size=16,
             log_mlflow=False,
+            save_path=tmp_path / "text_encoder.pt",
         )
         assert isinstance(model, TextEncoder)
 
     def test_model_output_after_training(
-        self, tiny_dataset: list[PersonaNarrative]
+        self, tmp_path, tiny_dataset: list[PersonaNarrative]
     ) -> None:
         """After training, the model should produce valid embeddings."""
         model = train(
@@ -497,6 +500,7 @@ class TestTrainingIntegration:
             n_epochs=1,
             batch_size=16,
             log_mlflow=False,
+            save_path=tmp_path / "text_encoder.pt",
         )
         model.eval()
         x = torch.randn(2, SENTENCE_DIM)
@@ -540,7 +544,7 @@ class TestTrainingIntegration:
         )
 
     def test_strategy_recovery_from_logits(
-        self, tiny_dataset: list[PersonaNarrative]
+        self, tmp_path, tiny_dataset: list[PersonaNarrative]
     ) -> None:
         """After training, classify validation records and check accuracy >50%.
 
@@ -552,6 +556,7 @@ class TestTrainingIntegration:
             n_epochs=5,
             batch_size=16,
             log_mlflow=False,
+            save_path=tmp_path / "text_encoder.pt",
         )
         model.eval()
 

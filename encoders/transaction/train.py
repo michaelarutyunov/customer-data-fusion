@@ -336,6 +336,7 @@ def train(
     device: str | None = None,
     lambda_contrastive: float = 0.5,
     nt_xent_temperature: float = 0.07,
+    save_path: Path | None = None,
 ) -> TransactionEncoder:
     """Train the transaction encoder with CE (archetype) + NT-Xent (individual identity).
 
@@ -570,7 +571,7 @@ def train(
 
         mlflow.log_metric("best_val_loss", best_val_loss)
 
-    _save_path = CHECKPOINT_PATHS["transaction"]
+    _save_path = save_path if save_path is not None else CHECKPOINT_PATHS["transaction"]
     _save_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(encoder.state_dict(), _save_path)
     logger.info("Checkpoint saved to %s", _save_path)
