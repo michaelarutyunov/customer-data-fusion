@@ -21,7 +21,6 @@ from pathlib import Path
 from typing import cast
 
 import joblib
-import numpy as np
 import pandas as pd
 import structlog
 from sklearn.linear_model import LogisticRegression
@@ -185,7 +184,7 @@ def train_drift_detector(
 
     # Prepare Stage 2 evaluation (drift month prediction)
     # Only evaluate on participants with drift_label=True
-    drift_mask: np.ndarray[bool] = y_test
+    drift_mask = y_test
     if drift_mask.sum() > 0:
         test_df = merged_df.iloc[test_idx]
         drift_df = test_df[drift_mask]
