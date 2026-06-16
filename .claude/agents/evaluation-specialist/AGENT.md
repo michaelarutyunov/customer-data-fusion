@@ -1,7 +1,7 @@
 # evaluation-specialist
 
 ## Role
-Owns all code in `evaluation/` — strategy recovery, ablation, geometry, cross-modal retrieval, PersonaConfig regression probes, and counterfactual evaluation.
+Owns all code in `evaluation/` — strategy recovery, ablation, geometry, cross-modal retrieval, and PersonaConfig regression probes.
 
 ## Trigger Conditions
 - Any edit to files in `evaluation/`
@@ -40,7 +40,7 @@ These probe whether the CDT embedding captures participant-level behavioural str
 
 **Primary individual-identity metric:** Dropout-view CDT retrieval recall@1 = 70.4% (140× over random chance, bead 0if). This is the correct metric for the NT-Xent-trained fusion model. See `.claude/context/prd-validation.md` for details.
 
-**geometry.py** produces two UMAP views: (a) coloured by archetype — tests between-persona separation; (b) coloured by a continuous PersonaConfig param (e.g. `price_sensitivity`) within each cluster — tests within-persona variation. If (b) shows a gradient inside clusters, the CDT embedding preserves individual deviation. If flat, it has collapsed within-persona variation to the archetype label. Saves UMAP coordinates + all 7 PersonaConfig float params to `data/synthetic/umap_fused.json`.
+**geometry.py** produces two UMAP views: (a) coloured by archetype — tests between-persona separation; (b) coloured by a continuous PersonaConfig param (e.g. `price_sensitivity`) within each cluster — tests within-persona variation. If (b) shows a gradient inside clusters, the CDT embedding preserves individual deviation. If flat, it has collapsed within-persona variation to the archetype label. Saves UMAP coordinates + all 7 PersonaConfig float params to `umap_fused.json` in `data/synthetic/` (written when `geometry.py` runs).
 
 **retrieval.py** runs two evaluations:
 - CDT-vs-single: fused CDT embedding as query → find nearest neighbour in each single-modality embedding space. 4 tests.
@@ -68,28 +68,6 @@ These probe whether the CDT embedding captures participant-level behavioural str
 - Ablation zeros slices of the concatenated 512-dim input, it does not re-run forward passes with missing modalities
 - Log all metrics to MLflow with appropriate tags (`stage=strategy_recovery`, `stage=ablation`, etc.)
 - All output dicts must be serialisable (no Tensor values) — convert to Python floats before returning
-
-## Counterfactual Evaluation
-
-Two complementary counterfactual approaches are implemented:
-
-### Option A — Archetype redistribution (`evaluation/counterfactual.py`)
-Applies hand-coded archetype-level redistribution rules to the existing CDT embedding. Three scenarios: (1) 20% price increase, (2) new best-in-class entrant, (3) brand removal. Honest about scope: redistribution is rule-coded, not data-derived.
-
-### Option B — Generator re-run (`evaluation/counterfactual_option_b.py`)
-Re-runs the generator for a target participant with modified `PersonaConfig` fields via `counterfactual_overrides`, re-encodes all modalities through frozen encoders, and measures CDT embedding cosine distance shift vs. the participant's original baseline embedding. This is the higher-fidelity approach — data-derived redistribution from the generative model.
-
-**Key function:** `simulate_counterfactual(participant_id, overrides, baseline_cache_path) -> dict`
-- Loads baseline CDT embedding from cache, derives archetype from participant_id prefix
-- Runs `run_pipeline(n=1, archetypes=[archetype], counterfactual_overrides={f"{archetype}_0000": overrides}, output_dir=<tempdir>, skip_narratives=True)`
-- Re-encodes trace, transaction, psychographic modalities; **copies text embedding from baseline** (narratives not regenerated)
-- Concatenates to [1, 512], embeds via frozen `LateFusionMetaLearner.embed()`, computes cosine distance
-
-**Threshold:** `MEANINGFUL_SHIFT_THRESHOLD = 0.27` (2× intra-archetype cosine distance SD, from bead c11). Shifts below this are within normal within-archetype variation.
-
-**Known limitation:** Counterfactual re-run uses a different random seed than the original participant — shift conflates parameter change with noise realization. Acceptable for prototype scope.
-
-**Override key:** Must use the GENERATED participant_id (e.g. `price_lex_0000`), NOT the original participant_id (e.g. `price_lex_0042`). The generator always starts its counter at 0.
 
 ## Context Documents
 

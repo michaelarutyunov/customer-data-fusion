@@ -511,7 +511,7 @@ Where `D` is the number of concrete product attributes from the Product schema.
 
 **Success criteria:**
 - **Baseline sanity check:** aggregate predicted demand matches the generator's known ground truth within 5% for the baseline market state. Note this is *weak* on its own — M2 is aggregated M1, and M1 is trained to mimic the generator, so baseline matching largely restates M1's accuracy. It catches aggregation bugs, nothing more.
-- **Counterfactual validity (the criterion that matters):** for at least one price-change and one product-withdrawal `MarketState`, M2's predicted *demand shift* must match a ground-truth shift obtained by re-running the generator under the same counterfactual via **Option B** (`evaluation/counterfactual_option_b.py`, which already re-runs the generator with `counterfactual_overrides`). Target: predicted vs. Option-B demand-shift direction agrees for every segment, and magnitude within 10%. This tests the thing the pricing analyst actually relies on; baseline matching does not.
+- **Counterfactual validity (the criterion that matters):** for at least one price-change and one product-withdrawal `MarketState`, M2's predicted *demand shift* must match a ground-truth shift obtained by re-running the generator under the same counterfactual via the generator's `persona_overrides` utility (`generator/pipeline.py` `run_pipeline(persona_overrides=...)`, which re-runs with overridden `PersonaConfig` params). Target: predicted vs. ground-truth demand-shift direction agrees for every segment, and magnitude within 10%. This tests the thing the pricing analyst actually relies on; baseline matching does not.
 
 ---
 

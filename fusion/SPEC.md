@@ -142,13 +142,10 @@ These evaluate whether the CDT embedding captures participant-level behavioural 
 | CDT geometry | UMAP coloured by archetype (between-persona separation) + coloured by continuous PersonaConfig param within cluster (within-persona variation) | `evaluation/geometry.py` |
 | Cross-modal retrieval | recall@1 and recall@10: CDT embedding → each single-modality space (4 tests); single-modality → single-modality (6 pairs). **⚠️ NOT the right metric for individual identity** — CDT and encoder are different representation spaces never trained to align. Near-zero recall is expected. | `evaluation/retrieval.py` |
 | PersonaConfig regression | Ridge R² for each of 7 latent params × 5 embedding sets (fused + 4 individual). Tests whether fusion recovers continuous latent variables better than any single modality | `evaluation/config_probe.py` |
-| Counterfactual shift | Cosine distance between original and counterfactual CDT embeddings after generator re-run with modified PersonaConfig | `evaluation/counterfactual_option_b.py` |
 
 **Dropout-view retrieval** (post-bead-0if): the primary individual-identity diagnostic. Two modality-dropout augmented views of the same participant are embedded via the meta-learner, and cosine-similarity ranked against all val participants. Result: **70.4% recall@1** (210 participants, 140× over random chance of 0.005). This is the metric that validates the NT-Xent training objective.
 
-**Counterfactual evaluation** (post-epic-sei): `simulate_counterfactual()` re-runs the generator with modified PersonaConfig fields, re-encodes through frozen encoders, and measures CDT cosine distance shift. A meaningful shift is >= 0.27 (2× intra-archetype SD, from bead c11). See `.claude/context/fusion-architecture.md` §Counterfactual evaluation for baseline details.
-
-These three evaluations together determine whether the prototype supports the strong CDT claim or only the weaker archetype-recovery claim — see `.claude/context/project-vision.md`.
+These evaluations together determine whether the prototype supports the strong CDT claim or only the weaker archetype-recovery claim — see `.claude/context/project-vision.md`.
 
 ## File Structure
 
@@ -166,13 +163,11 @@ evaluation/
   geometry.py               # UMAP projection + within-persona colouring
   retrieval.py              # cross-modal nearest-neighbour retrieval
   config_probe.py           # Ridge regression probes for PersonaConfig params
-  counterfactual.py         # Option A: archetype redistribution rules
-  counterfactual_option_b.py # Option B: generator re-run with modified PersonaConfig
 
 data/synthetic/
   participant_configs.jsonl  # PersonaConfig float params per participant
                              # written by generator/pipeline.py to output_dir
-                             # required by geometry.py, config_probe.py, counterfactual_option_b.py
+                             # required by geometry.py, config_probe.py
 ```
 
 ### `meta_learner.py` interface

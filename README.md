@@ -11,7 +11,6 @@ The system synthesises decision process traces, transaction histories, psychogra
 | Archetype recovery (fused) | **100%** accuracy across 7 decision-making archetypes |
 | Individual identity (dropout-view recall@1) | **70.4%** (140× over chance) |
 | PersonaConfig regression (fused R²) | **0.79–0.96** on all 7 continuous personality parameters |
-| Counterfactual simulation | Two methods: archetype redistribution + individual generator re-run |
 
 ### The 7 Behavioural Archetypes
 
@@ -86,14 +85,6 @@ uv run python -m fusion.train 2>&1 | tail -10
 # Strategy recovery: how well does fusion predict archetype?
 uv run python -m evaluation.strategy_recovery
 
-# Counterfactual: what if a consumer became more price-sensitive?
-uv run python -c "
-from evaluation.counterfactual_option_b import simulate_counterfactual
-result = simulate_counterfactual('price_lex_0042', {'price_sensitivity': 0.99})
-print(f'Cosine distance shift: {result[\"cosine_distance_shift\"]:.3f}')
-print(f'Meaningful (≥0.27): {result[\"cosine_distance_shift\"] >= 0.27}')
-"
-
 # All encoder probes (validate each modality)
 uv run python -m evaluation.run_probes
 
@@ -111,7 +102,7 @@ Trained model checkpoints are included in `models/` and synthetic data in `data/
 schemas/              # Data contracts — all modules import from here
 config/personas.yaml  # 7 persona archetype definitions (generative root)
 generator/            # Synthetic data pipeline (all modalities)
-  pipeline.py         # Orchestrates generation; supports counterfactual_overrides
+  pipeline.py         # Orchestrates generation; supports persona_overrides
   trace_simulator.py  # MouseLab-style decision process traces
   transaction_simulator.py  # Purchase history
   psychographic_generator.py  # Survey vectors
@@ -128,14 +119,11 @@ evaluation/
   strategy_recovery.py    # Fusion archetype recovery
   retrieval.py            # Individual identity (dropout-view recall@1)
   config_probe.py         # PersonaConfig regression (R² per parameter)
-  counterfactual.py       # Option A: archetype redistribution
-  counterfactual_option_b.py  # Option B: generator re-run
   geometry.py             # UMAP embedding geometry
   ablation.py             # Per-modality contribution
 notebooks/
   03_fusion_validation.ipynb
-  04_counterfactual_tests.ipynb
-tests/                # 421 tests (schemas, generators, encoders, evaluation)
+tests/                # 487 tests (schemas, generators, encoders, evaluation)
 ```
 
 ## Key Concepts
@@ -145,14 +133,6 @@ tests/                # 421 tests (schemas, generators, encoders, evaluation)
 **Schemas are the contract.** All modules import from `schemas/`. Generator and encoders never import each other. Modifying a dataclass requires updating all downstream generators and encoders.
 
 **Late fusion by design.** Each encoder trains in isolation. Fusion combines their outputs. Early fusion is an explicit upgrade, not the default.
-
-## Counterfactual Simulation
-
-Two complementary approaches:
-
-**Option A — Archetype redistribution** (`evaluation/counterfactual.py`): Applies rules from persona definitions to predict archetype-level shifts under market changes (price increase, new entrant, brand removal). Fast — operates on existing embeddings.
-
-**Option B — Individual simulation** (`evaluation/counterfactual_option_b.py`): Re-runs the generator with modified personality parameters for a specific consumer, re-encodes through frozen models, and measures the CDT embedding shift. Answers: "If *this specific consumer* became more price-sensitive, how would their behaviour change?"
 
 ## Documentation
 

@@ -59,10 +59,10 @@ log = structlog.get_logger(__name__)
 _OUTPUT_DIR = Path("data/synthetic")
 
 # ---------------------------------------------------------------------------
-# Counterfactual overrides — flat name → (parent_attr, child_attr) mapping
+# Persona overrides — flat name → (parent_attr, child_attr) mapping
 # ---------------------------------------------------------------------------
 
-COUNTERFACTUAL_FIELDS: dict[str, tuple[str, str]] = {
+PERSONA_OVERRIDE_FIELDS: dict[str, tuple[str, str]] = {
     "price_sensitivity": ("transactions", "price_sensitivity"),
     "brand_loyalty": ("transactions", "brand_loyalty"),
     "p_strategy_lapse": ("strategy", "p_strategy_lapse"),
@@ -77,14 +77,14 @@ def _apply_overrides(
     config: PersonaConfig,
     overrides: dict[str, float],
 ) -> PersonaConfig:
-    """Apply counterfactual overrides to a frozen PersonaConfig.
+    """Apply persona overrides to a frozen PersonaConfig.
 
     Parameters
     ----------
     config : PersonaConfig
         Original (frozen) persona configuration.
     overrides : dict[str, float]
-        Flat field name → new float value.  Must be in COUNTERFACTUAL_FIELDS.
+        Flat field name → new float value.  Must be in PERSONA_OVERRIDE_FIELDS.
 
     Returns
     -------
@@ -98,13 +98,13 @@ def _apply_overrides(
     """
     # Validate all keys first
     for field_name in overrides:
-        if field_name not in COUNTERFACTUAL_FIELDS:
+        if field_name not in PERSONA_OVERRIDE_FIELDS:
             raise ValueError(f"Unknown PersonaConfig field: {field_name}")
 
     # Group overrides by parent attribute to minimise replace() calls
     grouped: dict[str, dict[str, float]] = {}
     for field_name, new_value in overrides.items():
-        parent_attr, child_attr = COUNTERFACTUAL_FIELDS[field_name]
+        parent_attr, child_attr = PERSONA_OVERRIDE_FIELDS[field_name]
         grouped.setdefault(parent_attr, {})[child_attr] = new_value
 
     # Apply each group: replace nested object, then replace PersonaConfig
@@ -201,7 +201,7 @@ def run_pipeline(
     n_per_archetype: int | None = None,
     only_narratives: bool = False,
     trace_coverage: int = 250,
-    counterfactual_overrides: dict[str, dict[str, float]] | None = None,
+    persona_overrides: dict[str, dict[str, float]] | None = None,
 ) -> dict[str, int]:
     """
     Generate synthetic data for ``n`` participants over a temporal horizon.
@@ -236,10 +236,10 @@ def run_pipeline(
         Number of participants who receive process traces (months 1-2 only).
         Remaining participants have traces modality missing (natural missingness).
         Selected via stratified sampling for equal archetype representation.
-    counterfactual_overrides:
+    persona_overrides:
         Optional dict mapping participant_id to {field_name: new_value}.  Applied
         after PersonaConfig construction but before any modality generators.  Only
-        the 6 float fields in COUNTERFACTUAL_FIELDS are supported; raises ValueError
+        the 6 float fields in PERSONA_OVERRIDE_FIELDS are supported; raises ValueError
         for unknown field names.  Participants not listed are unaffected.
 
     Returns
@@ -331,14 +331,12 @@ def run_pipeline(
             seed = base_seed + i
             config = sample_persona(archetype_id, random_seed=seed)
 
-            if counterfactual_overrides and participant_id in counterfactual_overrides:
-                config = _apply_overrides(
-                    config, counterfactual_overrides[participant_id]
-                )
+            if persona_overrides and participant_id in persona_overrides:
+                config = _apply_overrides(config, persona_overrides[participant_id])
                 log.debug(
-                    "pipeline.counterfactual_override",
+                    "pipeline.persona_override",
                     participant_id=participant_id,
-                    overrides=counterfactual_overrides[participant_id],
+                    overrides=persona_overrides[participant_id],
                 )
 
             # Temporal trajectory: list[PersonaConfig] with index 0=baseline

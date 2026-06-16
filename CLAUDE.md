@@ -22,7 +22,7 @@ encoders/
   text/           # Frozen sentence-transformer for persona narratives
   psychographic/  # MLP projector for survey vectors
 fusion/           # Late fusion meta-learner; early fusion placeholder
-evaluation/       # Strategy recovery, geometry, ablation, counterfactual
+evaluation/       # Strategy recovery, geometry, ablation, probes
 notebooks/        # EDA and validation notebooks
 data/
   synthetic/      # Generated data (gitignored)
@@ -47,7 +47,7 @@ data/
 | `config/personas.yaml` | 7 persona archetype definitions — source of all synthetic data |
 | **Generator** | |
 | `generator/SPEC.md` | Generator module spec, output schemas, calibration targets |
-| `generator/pipeline.py` | Orchestrates all modalities per participant; supports `counterfactual_overrides` |
+| `generator/pipeline.py` | Orchestrates all modalities per participant; supports `persona_overrides` |
 | `generator/validate.py` | Cross-modal consistency checks |
 | **Encoders** | |
 | `encoders/trace/SPEC.md` | Trace encoder spec — primary behavioural signal |
@@ -57,8 +57,7 @@ data/
 | **Fusion** | |
 | `fusion/SPEC.md` | Fusion layer spec — multi-task CE + NT-Xent |
 | **Evaluation** | |
-| `evaluation/counterfactual.py` | Option A counterfactual (archetype redistribution) |
-| `evaluation/counterfactual_option_b.py` | Option B counterfactual (generator re-run) |
+| `evaluation/run_probes.py` | All encoder probes (strategy recovery, recall@1, R²) |
 
 ---
 
@@ -84,6 +83,12 @@ data/
 
 ---
 
+## Branch
+
+This repo uses **`main`** as its main branch (not `master`). PRs and fast-forward merges target `main`; the global `master` default does not apply here.
+
+---
+
 ## Build / Run / Test
 
 ```bash
@@ -94,9 +99,6 @@ uv run python -m evaluation.run_probes  # Validate all 4 encoder probes (run aft
 uv run mlflow ui                        # Launch experiment tracker
 bd ready                                # Check available tasks (Beads)
 ```
-
-> **Counterfactual simulation (Option B):** See `evaluation/counterfactual_option_b.py`.
-> Run: `uv run python -c "from evaluation.counterfactual_option_b import simulate_counterfactual; print(simulate_counterfactual('price_lex_0042', {'price_sensitivity': 0.99}))"`
 
 > **Warning — long-running output:** `generator.pipeline` and encoder train scripts emit many log lines.
 > Pipe through `| tail -50` when running interactively to avoid flooding terminal/context.
@@ -121,7 +123,7 @@ rm -rf dir         # NOT: rm -r dir
 
 This project uses `bd` (Beads) for all task tracking.
 
-> Issues live in a local Dolt DB (`.beads/dolt/`); sync via `bd dolt push/pull`.
+> Issues live in a local Dolt DB (`.beads/embeddeddolt/`); sync via `bd dolt push/pull`.
 > `.beads/issues.jsonl` is a passive export, not the source of truth.
 > See [SYNC_CONCEPTS.md](https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md) for anti-patterns.
 
@@ -192,6 +194,6 @@ Every bead that dispatches parallel sub-agents must include an explicit **Merge 
 
 ## Current Phase
 
-**Prototype Complete.** All phases closed. Four modality encoders trained with CE + NT-Xent multi-task objective (epic 3eg). Late-fusion meta-learner achieves 100% strategy recovery (Tier 1) and 70.4% dropout-view recall@1 (140× over chance — individual-level CDT, not just archetype classification). PersonaConfig regression R² 0.79–0.96 on all 7 parameters. Both counterfactual options implemented: Option A (archetype redistribution) and Option B (generator re-run via `counterfactual_overrides`, epic sei). PRD validation: 2 PASS, 2 PARTIAL. See `.claude/context/prd-validation.md` for formal criterion assessment and `.claude/context/prototype-summary.md` for stakeholder summary.
+**Prototype Complete.** All phases closed. Four modality encoders trained with CE + NT-Xent multi-task objective (epic 3eg). Late-fusion meta-learner achieves 100% strategy recovery (Tier 1) and 70.4% dropout-view recall@1 (140× over chance — individual-level CDT, not just archetype classification). PersonaConfig regression R² 0.79–0.96 on all 7 parameters. Counterfactual evaluation removed as misleading (bead v3w): the archetype-redistribution and generator-re-run scripts were circular on synthetic data; a learned choice-prediction capability is future work (`.claude/context/new-capabilities.md`). PRD validation: 2 PASS, 2 PARTIAL. See `.claude/context/prd-validation.md` for formal criterion assessment and `.claude/context/prototype-summary.md` for stakeholder summary.
 
 **Schema-update epic (complete — merged to `main`).** Extended to 6 modalities (clickstream + campaign) with variable-modality late fusion. All six beads + three follow-ups closed (`1it`, `33x`, `syu`/`fso`, `hcx`, `2io`; then `yy7` participant-duplication fix, `7t6` variable-modality eval, `fkx` R² decision). **6-modality result (dedup'd, authoritative):** archetype recovery **90.0%** (>85% Tier-1 floor), dropout-view recall@1 **82.1%** (improved over the 4-modality prototype's 70.4%), PersonaConfig R² **0.751** (gate ≥0.70, accepted in `fkx` as the identity-vs-linearity tradeoff). See `.claude/context/modality-expansion.md`, `.claude/context/fusion-architecture.md`, and `docs/post-mortems/schema-update-postmortem.md`.

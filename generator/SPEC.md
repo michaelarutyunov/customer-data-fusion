@@ -136,22 +136,22 @@ Two env vars control individual-level variation spread. Both are read at module 
 with 150 participants per archetype (1050 total). Achieves: trace ~56%, transaction ~71%, psychographic ~62%
 single-modality strategy recovery (post-multi-task, PRD target: 65–80%).
 
-## Counterfactual Overrides
+## Persona Overrides
 
-`run_pipeline()` accepts an optional `counterfactual_overrides` parameter for Option B counterfactual evaluation (epic sei):
+`run_pipeline()` accepts an optional `persona_overrides` parameter — a generator utility for pinning specific `PersonaConfig` values per participant (the counterfactual evaluation that used it was removed in bead v3w as circular on synthetic data):
 
 ```python
-counterfactual_overrides: dict[str, dict[str, float]] | None = None
+persona_overrides: dict[str, dict[str, float]] | None = None
 # Maps participant_id → {flat_field_name: new_value}
 ```
 
 **Mechanism:** After `sample_persona()` constructs the `PersonaConfig` for a participant, if that `participant_id` appears in the overrides dict, `_apply_overrides()` uses `dataclasses.replace()` to create a new frozen `PersonaConfig` with the overridden fields. All modality generators then receive the modified config.
 
-**Supported fields** (defined in `COUNTERFACTUAL_FIELDS` constant):
+**Supported fields** (defined in `PERSONA_OVERRIDE_FIELDS` constant):
 - `price_sensitivity`, `brand_loyalty` → `config.transactions`
 - `p_strategy_lapse` → `config.strategy`
 - `risk_tolerance`, `maximiser_score`, `involvement_score` → `config.psychographic`
 
 **Not supported:** `inspection_depth` is an `InspectionDepth` enum, not a float. Raises `ValueError` if specified.
 
-**Output path:** `participant_configs.jsonl` writes to `output_dir` (same as all other output files), not to a hardcoded canonical path. This allows counterfactual runs to temp directories without corrupting the main dataset.
+**Output path:** `participant_configs.jsonl` writes to `output_dir` (same as all other output files), not to a hardcoded canonical path. This allows override runs to temp directories without corrupting the main dataset.
