@@ -26,6 +26,7 @@ import mlflow
 
 from schemas import CHECKPOINT_PATHS, EMBEDDING_DIM, PERSONA_TO_IDX
 from fusion.meta_learner import LateFusionMetaLearner
+from fusion.temporal_loss import temporal_contrastive_loss
 
 
 # ---------------------------------------------------------------------------
@@ -741,8 +742,12 @@ def train(
     # Build or load embedding cache
     embeddings = build_cache(encoders, cache_path, device)
 
+    # Extract participant IDs from cache (needed for temporal data validation)
+    participant_ids: list[str] = embeddings["participant_ids"]  # type: ignore[assignment]
+
     # Load temporal data if provided
     monthly_embeddings = None
+    temporal_participant_ids: list[str] = []  # Initialize for training loop access
     if temporal_data is not None and temporal_weight > 0:
         temporal_path = Path(temporal_data)
         if not temporal_path.exists():
@@ -751,10 +756,10 @@ def train(
         print(f"Loading temporal embeddings from {temporal_path}...")
         temporal_cache = torch.load(temporal_path, map_location=device, weights_only=True)
         monthly_embeddings = temporal_cache["monthly_embeddings"]  # [N, 12, 128]
+        temporal_participant_ids = temporal_cache["participant_ids"]  # type: ignore[assignment]
         print(f"Temporal embeddings loaded: shape {monthly_embeddings.shape}")
 
         # Validate participant alignment
-        temporal_participant_ids = temporal_cache["participant_ids"]
         if set(temporal_participant_ids) != set(participant_ids):
             raise ValueError(
                 "Temporal data participant IDs don't match cache. "
@@ -762,7 +767,6 @@ def train(
             )
 
     # Split participants
-    participant_ids: list[str] = embeddings["participant_ids"]  # type: ignore[assignment]
     train_ids, val_ids = split_by_participant(participant_ids)
 
     # Create train/val indices
@@ -789,7 +793,7 @@ def train(
     val_embs = {mod: embeddings[mod][val_indices] for mod in _MODALITIES}
     val_labels = embeddings["labels"][val_indices]
 
-    def make_dataset(embs_dict, labels):
+    def make_dataset(embs_dict, labels, indices):
         all_embs = torch.stack(
             [embs_dict[mod] for mod in _MODALITIES], dim=1
         )  # [N, M, 128]
@@ -798,10 +802,10 @@ def train(
             f"got {tuple(all_embs.shape)} — a non-modality key may have leaked "
             f"into the concat."
         )
-        return TensorDataset(all_embs, labels)
+        return TensorDataset(all_embs, labels, indices)
 
-    train_ds = make_dataset(train_embs, train_labels)
-    val_ds = make_dataset(val_embs, val_labels)
+    train_ds = make_dataset(train_embs, train_labels, train_indices)
+    val_ds = make_dataset(val_embs, val_labels, val_indices)
 
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
@@ -827,9 +831,10 @@ def train(
         epoch_temp = 0.0
         n_batches = 0
 
-        for batch_embs, batch_labels in train_loader:
+        for batch_embs, batch_labels, batch_indices in train_loader:
             batch_embs = batch_embs.to(device)
             batch_labels = batch_labels.to(device)
+            batch_indices = batch_indices.to(device)
 
             # View 1: modality-dropout augmented fusion input
             v1 = _apply_modality_dropout(batch_embs, p_dropout, device)
@@ -852,9 +857,22 @@ def train(
             # Temporal loss: adjacent-month positive pairs
             temp_loss = torch.tensor(0.0, device=device)
             if monthly_embeddings is not None and temporal_weight > 0:
-                # TODO: Add proper batching for temporal loss computation (deferred)
-                # For now: skip temporal loss in first implementation
-                pass
+                # batch_indices contains indices into participant_ids for this batch
+                batch_pids = [participant_ids[idx.item()] for idx in batch_indices]
+
+                # Find positions of batch participants in temporal data
+                # temporal_participant_ids is from the cache (same order as monthly_embeddings)
+                temporal_pid_to_idx = {pid: i for i, pid in enumerate(temporal_participant_ids)}
+                batch_temporal_indices = [temporal_pid_to_idx[pid] for pid in batch_pids]
+
+                # Extract monthly embeddings for this batch: [batch_size, 12, 128]
+                batch_monthly_embeddings = monthly_embeddings[batch_temporal_indices]
+
+                # Compute temporal contrastive loss
+                temp_loss = temporal_contrastive_loss(
+                    batch_monthly_embeddings,
+                    temperature=nt_xent_temperature,
+                )
 
             loss = ce_loss + lambda_contrastive * nt_loss + temporal_weight * temp_loss
 
@@ -878,7 +896,7 @@ def train(
         val_loss_sum = 0.0
 
         with torch.no_grad():
-            for batch_embs, batch_labels in val_loader:
+            for batch_embs, batch_labels, _ in val_loader:
                 batch_embs = batch_embs.to(device)
                 batch_labels = batch_labels.to(device)
 
