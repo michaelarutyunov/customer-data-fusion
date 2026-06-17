@@ -39,16 +39,19 @@ def load_monthly_features_for_participant(
         device: Device to load tensors on
 
     Returns:
-        Dictionary with modality tensors (trace, transaction, psychographic, etc.)
+        Dictionary with modality tensors (all 6 modalities)
     """
     # TODO: This is a placeholder - needs actual data loading logic
     # For now, return random embeddings to test the pipeline
+    # Must return all 6 modalities for fusion model compatibility
     _ = participant_id, month  # Mark as used for future implementation
     return {
         "trace": torch.randn(1, EMBEDDING_DIM, device=device),
         "transaction": torch.randn(1, EMBEDDING_DIM, device=device),
+        "text": torch.randn(1, EMBEDDING_DIM, device=device),
         "psychographic": torch.randn(1, EMBEDDING_DIM, device=device),
-        # Add other modalities as needed
+        "clickstream": torch.randn(1, EMBEDDING_DIM, device=device),
+        "campaign": torch.randn(1, EMBEDDING_DIM, device=device),
     }
 
 
@@ -126,7 +129,8 @@ def generate_monthly_temporal_embeddings(
             # Get CDT embedding from frozen fusion model
             with torch.no_grad():
                 _, cdt_embedding = model.forward_with_embedding(fusion_input)
-                participant_monthly_embeddings.append(cdt_embedding.cpu())
+                # Squeeze batch dim: [1, 128] -> [128]
+                participant_monthly_embeddings.append(cdt_embedding.squeeze(0).cpu())
 
         # Stack: [12, 128]
         monthly_embeddings_list.append(torch.stack(participant_monthly_embeddings))
