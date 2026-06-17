@@ -9,7 +9,7 @@ abort valid batch runs.
 
 Public API:
     validate_participant(
-        config, trial_records, transactions, psychographic, narrative
+        config, trial_records, transactions, psychographic, narrative, choice_sets
     ) -> ValidationReport
 """
 
@@ -24,6 +24,7 @@ from schemas.psychographic import PsychographicVector
 from schemas.text import PersonaNarrative
 from schemas.trace import TrialRecord
 from schemas.transaction import TransactionRecord
+from schemas.choice_set import ChoiceSet
 
 log = structlog.get_logger()
 
@@ -52,10 +53,11 @@ def validate_participant(
     transactions: list[TransactionRecord],
     psychographic: PsychographicVector,
     narrative: PersonaNarrative,
+    choice_sets: list[ChoiceSet] | None = None,
     participant_id: str | None = None,
 ) -> ValidationReport:
     """
-    Run all 5 cross-modal consistency checks for one participant.
+    Run all 8 cross-modal consistency checks for one participant.
 
     Failures are logged at WARNING; the report is returned regardless.
     """
@@ -69,6 +71,12 @@ def validate_participant(
     _check_narrative_word_count(narrative, report, bound_log)
     _check_transaction_price_consistency(config, transactions, report, bound_log)
     _check_payne_index_range(config, trial_records, report, bound_log)
+
+    # Phase 0 choice validation
+    if choice_sets is not None:
+        _check_choice_consistency(trial_records, choice_sets, report, bound_log)
+        _check_product_coverage(choice_sets, report, bound_log)
+        _check_trace_choice_coupling(trial_records, choice_sets, report, bound_log)
 
     if report.passed:
         bound_log.debug("validation_passed")
@@ -216,3 +224,174 @@ def _check_payne_index_range(
             mean_payne_index=round(mean_pi, 3),
             expected_range=[lo, hi],
         )
+
+
+def _check_choice_consistency(
+    trial_records: list[TrialRecord],
+    choice_sets: list[ChoiceSet],
+    report: ValidationReport,
+    bound_log: structlog.BoundLogger,
+) -> None:
+    """
+    Verify ChoiceSet.chosen_alternative matches TrialRecord.final_choice.
+
+    This ensures the choice coupling is correctly recorded.
+    """
+    # Build choice_set lookup
+    choice_set_map = {cs.choice_set_id: cs for cs in choice_sets}
+
+    for trial in trial_records:
+        if trial.choice_set_id is None:
+            continue  # Old data without choice_set linkage
+
+        choice_set = choice_set_map.get(trial.choice_set_id)
+        if choice_set is None:
+            msg = f"Trial {trial.trial_id}: choice_set_id={trial.choice_set_id} not found in choice_sets"
+            report.fail("choice_consistency", msg)
+            bound_log.warning("validation_failed", check="choice_consistency", trial_id=trial.trial_id)
+            continue
+
+        if choice_set.chosen_alternative != trial.final_choice:
+            msg = (
+                f"Trial {trial.trial_id}: choice_set.chosen_alternative={choice_set.chosen_alternative} "
+                f"!= trial.final_choice={trial.final_choice}"
+            )
+            report.fail("choice_consistency", msg)
+            bound_log.warning(
+                "validation_failed",
+                check="choice_consistency",
+                trial_id=trial.trial_id,
+                choice_set_alternative=choice_set.chosen_alternative,
+                trial_choice=trial.final_choice,
+            )
+
+
+def _check_product_coverage(
+    choice_sets: list[ChoiceSet],
+    report: ValidationReport,
+    bound_log: structlog.BoundLogger,
+) -> None:
+    """
+    Verify all ChoiceSet records have valid product attributes.
+
+    Checks:
+    - displayed_attributes contains price and quality for all alternatives
+    - choice_probabilities sum to ~1.0 (within 0.1 tolerance)
+    - alternative_products mapping is complete
+    """
+    for choice_set in choice_sets:
+        # Check displayed_attributes completeness
+        for slot, attrs in choice_set.displayed_attributes.items():
+            if "price" not in attrs:
+                msg = f"ChoiceSet {choice_set.choice_set_id}: slot {slot} missing 'price' attribute"
+                report.fail("product_coverage", msg)
+                bound_log.warning(
+                    "validation_failed",
+                    check="product_coverage",
+                    choice_set_id=choice_set.choice_set_id,
+                    missing_attribute="price",
+                    slot=slot,
+                )
+            if "quality" not in attrs:
+                msg = f"ChoiceSet {choice_set.choice_set_id}: slot {slot} missing 'quality' attribute"
+                report.fail("product_coverage", msg)
+                bound_log.warning(
+                    "validation_failed",
+                    check="product_coverage",
+                    choice_set_id=choice_set.choice_set_id,
+                    missing_attribute="quality",
+                    slot=slot,
+                )
+
+        # Check probability normalization
+        prob_sum = sum(choice_set.choice_probabilities.values())
+        if not (0.9 <= prob_sum <= 1.1):  # Allow 0.1 tolerance for numerical precision
+            msg = (
+                f"ChoiceSet {choice_set.choice_set_id}: choice_probabilities sum={prob_sum:.3f} "
+                f"not in [0.9, 1.1]"
+            )
+            report.fail("product_coverage", msg)
+            bound_log.warning(
+                "validation_failed",
+                check="product_coverage",
+                choice_set_id=choice_set.choice_set_id,
+                prob_sum=round(prob_sum, 3),
+            )
+
+        # Check alternative_products completeness
+        expected_slots = set(choice_set.displayed_attributes.keys())
+        provided_slots = set(choice_set.alternative_products.keys())
+        if expected_slots != provided_slots:
+            msg = (
+                f"ChoiceSet {choice_set.choice_set_id}: alternative_products slots {provided_slots} "
+                f"!= displayed_attributes slots {expected_slots}"
+            )
+            report.fail("product_coverage", msg)
+            bound_log.warning(
+                "validation_failed",
+                check="product_coverage",
+                choice_set_id=choice_set.choice_set_id,
+                expected_slots=list(expected_slots),
+                provided_slots=list(provided_slots),
+            )
+
+
+def _check_trace_choice_coupling(
+    trial_records: list[TrialRecord],
+    choice_sets: list[ChoiceSet],
+    report: ValidationReport,
+    bound_log: structlog.BoundLogger,
+) -> None:
+    """
+    Verify trace-choice coupling by checking choice_set_id linkage.
+
+    Ensures:
+    - All trials with choices have choice_set_id populated
+    - All choice_sets are referenced by exactly one trial
+    - choice_set_id format matches trial_id format (linkage integrity)
+    """
+    # Build choice_set lookup
+    choice_set_map = {cs.choice_set_id: cs for cs in choice_sets}
+
+    # Check 1: All trials with choices should have choice_set_id
+    trials_with_choice = [t for t in trial_records if t.final_choice is not None]
+    trials_without_link = [t for t in trials_with_choice if t.choice_set_id is None]
+
+    if trials_without_link:
+        msg = f"{len(trials_without_link)} trials have final_choice but no choice_set_id linkage"
+        report.fail("trace_choice_coupling", msg)
+        bound_log.warning(
+            "validation_failed",
+            check="trace_choice_coupling",
+            unlinked_trials=len(trials_without_link),
+        )
+
+    # Check 2: All choice_sets should be referenced by a trial
+    referenced_choice_set_ids = {t.choice_set_id for t in trial_records if t.choice_set_id is not None}
+    unreferenced_choice_sets = [
+        cs for cs in choice_sets if cs.choice_set_id not in referenced_choice_set_ids
+    ]
+
+    if unreferenced_choice_sets:
+        msg = f"{len(unreferenced_choice_sets)} choice_sets not referenced by any trial"
+        report.fail("trace_choice_coupling", msg)
+        bound_log.warning(
+            "validation_failed",
+            check="trace_choice_coupling",
+            unreferenced_choice_sets=len(unreferenced_choice_sets),
+        )
+
+    # Check 3: Format consistency (choice_set_id should match trial_id format)
+    for trial in trial_records:
+        if trial.choice_set_id is not None and trial.choice_set_id != trial.trial_id:
+            msg = (
+                f"Trial {trial.trial_id}: choice_set_id={trial.choice_set_id} "
+                f"does not match trial_id format"
+            )
+            report.fail("trace_choice_coupling", msg)
+            bound_log.warning(
+                "validation_failed",
+                check="trace_choice_coupling",
+                trial_id=trial.trial_id,
+                choice_set_id=trial.choice_set_id,
+            )

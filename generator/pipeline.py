@@ -16,8 +16,8 @@ For each participant:
   5. Write merged + month-partitioned JSONL outputs
 
 Output:
-  Merged:   data/synthetic/{traces,trials,transactions,psychographics,narratives,
-            clickstream,campaigns,participant_configs}.jsonl
+  Merged:   data/synthetic/{traces,trials,choice_sets,transactions,psychographics,
+            narratives,clickstream,campaigns,participant_configs}.jsonl
   Monthly:  data/synthetic/{transactions,clickstream,campaigns}_month_{MM}.jsonl
 
 Usage:
@@ -290,6 +290,7 @@ def run_pipeline(
         handles = {
             "traces": open(output_dir / "traces.jsonl", "w"),
             "trials": open(output_dir / "trials.jsonl", "w"),
+            "choice_sets": open(output_dir / "choice_sets.jsonl", "w"),
             "transactions": open(output_dir / "transactions.jsonl", "w"),
             "psychographics": open(output_dir / "psychographics.jsonl", "w"),
             "participant_configs": open(output_dir / "participant_configs.jsonl", "w"),
@@ -354,6 +355,7 @@ def run_pipeline(
 
             # Accumulators for baseline-month validation
             baseline_trials: list = []
+            baseline_choice_sets: list = []
             baseline_transactions: list = []
             baseline_psychographic = None
             narrative = None
@@ -436,7 +438,7 @@ def run_pipeline(
 
                     # --- Traces (snapshot: months 1-2, coverage subset only) ---
                     if has_traces and month in (1, 2):
-                        events, trials = simulate_session(
+                        events, trials, choice_sets = simulate_session(
                             month_config,
                             category=category,
                             n_trials=n_trials,
@@ -452,8 +454,14 @@ def run_pipeline(
                                 _to_json_with_month(trial, month) + "\n"
                             )
                             counts["trials"] += 1
+                        for choice_set in choice_sets:
+                            handles["choice_sets"].write(  # type: ignore[union-attr]
+                                _to_json_with_month(choice_set, month) + "\n"
+                            )
+                            counts["choice_sets"] += 1
                         if month == 1:
                             baseline_trials = trials
+                            baseline_choice_sets = choice_sets
 
                     # --- Psychographics (snapshot: months 1 and 7) ---
                     if month in (1, 7):
@@ -526,6 +534,7 @@ def run_pipeline(
                         baseline_transactions,
                         baseline_psychographic,
                         narrative,
+                        baseline_choice_sets,
                         participant_id=participant_id,
                     )
                     if not report.passed:
