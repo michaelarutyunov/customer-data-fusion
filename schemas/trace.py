@@ -72,3 +72,4 @@ class TrialRecord:
     prop_cells_inspected: float  # total_acquisitions / (n_alternatives * n_attributes)
     payne_index: float  # +1 = pure alternative-wise, -1 = pure attribute-wise
     persona_id: str  # ground truth archetype (synthetic data only)
+    choice_set_id: Optional[str] = None  # Links to ChoiceSet (Phase 0)
