@@ -684,6 +684,8 @@ def train(
     phase: str = "2",
     lambda_contrastive: float = 0.5,
     nt_xent_temperature: float = 0.07,
+    temporal_weight: float = 0.0,
+    temporal_data: Optional[Path] = None,
 ) -> LateFusionMetaLearner:
     """Train the fusion meta-learner with NT-Xent + CE multi-task objective.
 
@@ -718,6 +720,10 @@ def train(
         Weight for NT-Xent loss. Total = CE + lambda * NT-Xent.
     nt_xent_temperature : float
         NT-Xent temperature (default 0.07).
+    temporal_weight : float
+        Weight for temporal contrastive loss. Default 0.0 (disabled).
+    temporal_data : Path | None
+        Path to temporal embeddings cache for temporal training.
 
     Returns
     -------
@@ -920,7 +926,90 @@ def _select_modalities() -> list[str]:
 
 
 if __name__ == "__main__":
+    import argparse
+
     from dotenv import load_dotenv
 
+    parser = argparse.ArgumentParser(description="Train fusion meta-learner")
+    parser.add_argument(
+        "--n-epochs",
+        type=int,
+        default=100,
+        help="Maximum training epochs",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=256,
+        help="Mini-batch size",
+    )
+    parser.add_argument(
+        "--lr",
+        type=float,
+        default=1e-3,
+        help="Learning rate",
+    )
+    parser.add_argument(
+        "--p-dropout",
+        type=float,
+        default=0.2,
+        help="Per-modality dropout probability",
+    )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default="cpu",
+        help="Target device (cpu or cuda)",
+    )
+    parser.add_argument(
+        "--no-mlflow",
+        action="store_true",
+        help="Disable MLflow logging",
+    )
+    parser.add_argument(
+        "--phase",
+        type=str,
+        default="2",
+        help="Meta-learner phase (1 or 2)",
+    )
+    parser.add_argument(
+        "--lambda-contrastive",
+        type=float,
+        default=0.5,
+        help="Weight for NT-Xent loss",
+    )
+    parser.add_argument(
+        "--nt-xent-temperature",
+        type=float,
+        default=0.07,
+        help="NT-Xent temperature",
+    )
+    parser.add_argument(
+        "--temporal-weight",
+        type=float,
+        default=0.0,
+        help="Weight for temporal contrastive loss (default 0.0 = disabled)",
+    )
+    parser.add_argument(
+        "--temporal-data",
+        type=str,
+        default=None,
+        help="Path to temporal embeddings cache for temporal training",
+    )
+    args = parser.parse_args()
+
     load_dotenv(override=True)
-    train(modalities=_select_modalities())
+    train(
+        modalities=_select_modalities(),
+        n_epochs=args.n_epochs,
+        batch_size=args.batch_size,
+        lr=args.lr,
+        p_dropout=args.p_dropout,
+        device=args.device,
+        log_mlflow=not args.no_mlflow,
+        phase=args.phase,
+        lambda_contrastive=args.lambda_contrastive,
+        nt_xent_temperature=args.nt_xent_temperature,
+        temporal_weight=args.temporal_weight,
+        temporal_data=Path(args.temporal_data) if args.temporal_data else None,
+    )
