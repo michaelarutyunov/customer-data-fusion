@@ -37,6 +37,8 @@ from schemas.clickstream import (
     DeviceType,
 )
 from schemas.campaign import CampaignEvent, CampaignType
+from schemas.product import Product
+from schemas.choice_set import ChoiceSet
 
 # Output dimension for all modality encoders — must match fusion meta-learner input.
 # Changing this requires retraining all encoders and the fusion layer.
@@ -115,4 +117,7 @@ __all__ = [
     # Campaign
     "CampaignEvent",
     "CampaignType",
+    # Choice architecture
+    "ChoiceSet",
+    "Product",
 ]
