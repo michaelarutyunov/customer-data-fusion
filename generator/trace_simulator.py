@@ -13,7 +13,7 @@ Phase 2b additions:
 
 Public API
 ----------
-simulate_session(config, category, n_trials) -> (events, trials)
+simulate_session(config, category, n_trials) -> (events, trials, choice_sets)
 """
 
 from __future__ import annotations
@@ -34,6 +34,7 @@ from schemas.persona import (
     Strategy,
     StrategyParams,
 )
+from schemas.choice_set import ChoiceSet
 from schemas.product import Product
 from schemas.trace import AcquisitionEvent, EventType, TrialRecord
 
@@ -698,7 +699,7 @@ def _compute_choice_from_inspected_cells(
     alternative_products: dict[str, Product],
     temperature: float = 1.0,
     rng: np.random.Generator | None = None,
-) -> Optional[str]:
+) -> tuple[Optional[str], dict[str, float]]:
     """Compute choice based on inspected cells and strategy.
 
     This couples the trace (what was inspected) to the choice,
@@ -721,12 +722,14 @@ def _compute_choice_from_inspected_cells(
     -------
     chosen_slot:
         The slot letter of the chosen alternative, or None if no events.
+    probabilities:
+        Dictionary mapping slot letters to choice probabilities.
     """
     if rng is None:
         rng = np.random.default_rng()
 
     if len(trial_events) == 0:
-        return None
+        return None, {}
 
     # Extract inspected attributes per alternative
     inspected_attrs_per_alt: dict[str, dict[str, float]] = {}
@@ -777,13 +780,17 @@ def _compute_choice_from_inspected_cells(
     sum_exp = sum(exp_utilities.values())
 
     if sum_exp == 0:
-        return str(rng.choice(list(alternative_products.keys())))
+        # Fallback: uniform random
+        slots = list(alternative_products.keys())
+        chosen_slot = str(rng.choice(slots))
+        uniform_prob = 1.0 / len(slots)
+        return chosen_slot, {slot: uniform_prob for slot in slots}
 
     probs = {k: v / sum_exp for k, v in exp_utilities.items()}
 
     # Sample choice
     chosen_slot = rng.choice(list(probs.keys()), p=list(probs.values()))
-    return chosen_slot
+    return chosen_slot, probs
 
 
 def _get_attribute_value(product: Product, attr: str) -> float | None:
@@ -892,7 +899,7 @@ def simulate_session(
     category: str = "electronics",
     n_trials: int = 20,
     participant_id: str | None = None,
-) -> tuple[list[AcquisitionEvent], list[TrialRecord]]:
+) -> tuple[list[AcquisitionEvent], list[TrialRecord], list[ChoiceSet]]:
     """
     Simulate a MouseLab session for one participant.
 
@@ -912,10 +919,12 @@ def simulate_session(
 
     Returns
     -------
-    Tuple of (events, trials):
+    Tuple of (events, trials, choice_sets):
       events — flat list of AcquisitionEvent across all trials, ordered by
                trial then event_index.
       trials — one TrialRecord per trial.
+      choice_sets — one ChoiceSet per trial containing product attributes
+                     and choice probabilities.
     """
     rng = np.random.default_rng(config.random_seed)
 
@@ -943,6 +952,7 @@ def simulate_session(
 
     all_events: list[AcquisitionEvent] = []
     all_trials: list[TrialRecord] = []
+    all_choice_sets: list[ChoiceSet] = []
 
     for trial_idx in range(n_trials):
         trial_id = f"{session_id}_t{trial_idx:03d}"
@@ -1050,7 +1060,7 @@ def simulate_session(
             slot: _load_product_for_slot(slot, category, _products_by_category, rng)
             for slot in alts
         }
-        final_choice = _compute_choice_from_inspected_cells(
+        final_choice, choice_probabilities = _compute_choice_from_inspected_cells(
             trial_events,
             strategy_params,
             alternative_products,
@@ -1079,6 +1089,28 @@ def simulate_session(
         all_events.extend(trial_events)
         all_trials.append(trial_record)
 
+        # Create ChoiceSet record
+        choice_set_id = trial_id  # Use trial_id as choice_set_id for linkage
+        alternative_product_ids = {
+            slot: product.product_id for slot, product in alternative_products.items()
+        }
+        displayed_attributes = {}
+        for slot, product in alternative_products.items():
+            displayed_attributes[slot] = {
+                "price": product.price_normalised,
+                "quality": product.quality_normalised,
+            }
+        choice_set = ChoiceSet(
+            choice_set_id=choice_set_id,
+            participant_id=participant_id,
+            n_alternatives=n_alts,
+            alternative_products=alternative_product_ids,
+            displayed_attributes=displayed_attributes,
+            chosen_alternative=final_choice or "",  # Handle None case
+            choice_probabilities=choice_probabilities,
+        )
+        all_choice_sets.append(choice_set)
+
         if trial_idx > 0 and trial_idx % 5 == 0:
             log.info(
                 "trace_simulator.progress",
@@ -1097,4 +1129,4 @@ def simulate_session(
                 prop_cells=round(prop_cells, 3),
             )
 
-    return all_events, all_trials
+    return all_events, all_trials, all_choice_sets

@@ -150,25 +150,26 @@ class TestSimulateSessionAPI:
     def test_returns_tuple_of_lists(self, price_lex_config):
         result = simulate_session(price_lex_config)
         assert isinstance(result, tuple)
-        events, trials = result
+        events, trials, choice_sets = result
         assert isinstance(events, list)
         assert isinstance(trials, list)
+        assert isinstance(choice_sets, list)
 
     def test_default_n_trials(self, price_lex_config):
-        _, trials = simulate_session(price_lex_config)
+        _, trials, _ = simulate_session(price_lex_config)
         assert len(trials) == 20
 
     def test_custom_n_trials(self, price_lex_config):
-        _, trials = simulate_session(price_lex_config, n_trials=5)
+        _, trials, _ = simulate_session(price_lex_config, n_trials=5)
         assert len(trials) == 5
 
     def test_custom_category(self, price_lex_config):
-        _, trials = simulate_session(price_lex_config, category="home_goods")
+        _, trials, _ = simulate_session(price_lex_config, category="home_goods")
         assert all(t.category == "home_goods" for t in trials)
 
     def test_reproducible_with_same_seed(self, price_lex_config):
-        events1, trials1 = simulate_session(price_lex_config, n_trials=10)
-        events2, trials2 = simulate_session(price_lex_config, n_trials=10)
+        events1, trials1, _ = simulate_session(price_lex_config, n_trials=10)
+        events2, trials2, _ = simulate_session(price_lex_config, n_trials=10)
         assert [e.dwell_ms for e in events1] == [e.dwell_ms for e in events2]
         assert [t.payne_index for t in trials1] == [t.payne_index for t in trials2]
 
@@ -183,8 +184,8 @@ class TestSimulateSessionAPI:
             _make_strategy(Strategy.LEXICOGRAPHIC, InspectionDepth.SHALLOW, "price"),
             seed=99,
         )
-        _, t1 = simulate_session(c1, n_trials=5)
-        _, t2 = simulate_session(c2, n_trials=5)
+        _, t1, _ = simulate_session(c1, n_trials=5)
+        _, t2, _ = simulate_session(c2, n_trials=5)
         # Different seeds → different board sizes (n_alts from {3,5,7})
         assert any(
             t1[i].total_acquisitions != t2[i].total_acquisitions for i in range(5)
@@ -198,59 +199,59 @@ class TestSimulateSessionAPI:
 
 class TestTrialRecordFields:
     def test_persona_id_matches_config(self, price_lex_config):
-        _, trials = simulate_session(price_lex_config, n_trials=5)
+        _, trials, _ = simulate_session(price_lex_config, n_trials=5)
         assert all(t.persona_id == "price_lex" for t in trials)
 
     def test_trial_index_sequential(self, price_lex_config):
-        _, trials = simulate_session(price_lex_config, n_trials=10)
+        _, trials, _ = simulate_session(price_lex_config, n_trials=10)
         assert [t.trial_index for t in trials] == list(range(10))
 
     def test_n_alternatives_valid(self, price_lex_config):
-        _, trials = simulate_session(price_lex_config, n_trials=20)
+        _, trials, _ = simulate_session(price_lex_config, n_trials=20)
         assert all(t.n_alternatives in (3, 5, 7) for t in trials)
 
     def test_n_attributes_valid(self, price_lex_config):
-        _, trials = simulate_session(price_lex_config, n_trials=20)
+        _, trials, _ = simulate_session(price_lex_config, n_trials=20)
         assert all(t.n_attributes in (4, 6, 8) for t in trials)
 
     def test_prop_cells_inspected_range(self, price_lex_config):
-        _, trials = simulate_session(price_lex_config, n_trials=20)
+        _, trials, _ = simulate_session(price_lex_config, n_trials=20)
         assert all(0.0 < t.prop_cells_inspected <= 1.0 for t in trials)
 
     def test_prop_cells_consistent_with_acquisitions(self, price_lex_config):
-        _, trials = simulate_session(price_lex_config, n_trials=20)
+        _, trials, _ = simulate_session(price_lex_config, n_trials=20)
         for t in trials:
             expected = t.total_acquisitions / (t.n_alternatives * t.n_attributes)
             assert abs(t.prop_cells_inspected - round(expected, 4)) < 1e-6
 
     def test_payne_index_range(self, price_lex_config):
-        _, trials = simulate_session(price_lex_config, n_trials=20)
+        _, trials, _ = simulate_session(price_lex_config, n_trials=20)
         assert all(-1.0 <= t.payne_index <= 1.0 for t in trials)
 
     def test_final_choice_is_valid_alt_or_none(self, price_lex_config):
-        _, trials = simulate_session(price_lex_config, n_trials=20)
+        _, trials, _ = simulate_session(price_lex_config, n_trials=20)
         valid_alts = {"A", "B", "C", "D", "E", "F", "G"}
         for t in trials:
             if t.final_choice is not None:
                 assert t.final_choice in valid_alts
 
     def test_confidence_rating_range(self, price_lex_config):
-        _, trials = simulate_session(price_lex_config, n_trials=20)
+        _, trials, _ = simulate_session(price_lex_config, n_trials=20)
         for t in trials:
             if t.confidence_rating is not None:
                 assert 1 <= t.confidence_rating <= 5
 
     def test_same_session_id_across_trials(self, price_lex_config):
-        _, trials = simulate_session(price_lex_config, n_trials=10)
+        _, trials, _ = simulate_session(price_lex_config, n_trials=10)
         session_ids = {t.session_id for t in trials}
         assert len(session_ids) == 1
 
     def test_trial_ids_unique(self, price_lex_config):
-        _, trials = simulate_session(price_lex_config, n_trials=10)
+        _, trials, _ = simulate_session(price_lex_config, n_trials=10)
         assert len({t.trial_id for t in trials}) == 10
 
     def test_time_pressure_is_bool(self, price_lex_config):
-        _, trials = simulate_session(price_lex_config, n_trials=20)
+        _, trials, _ = simulate_session(price_lex_config, n_trials=20)
         assert all(isinstance(t.time_pressure, bool) for t in trials)
 
 
@@ -261,13 +262,13 @@ class TestTrialRecordFields:
 
 class TestAcquisitionEventFields:
     def test_event_index_starts_at_zero_per_trial(self, price_lex_config):
-        events, trials = simulate_session(price_lex_config, n_trials=5)
+        events, trials, _ = simulate_session(price_lex_config, n_trials=5)
         for trial in trials:
             trial_events = [e for e in events if e.trial_id == trial.trial_id]
             assert trial_events[0].event_index == 0
 
     def test_event_index_sequential_per_trial(self, price_lex_config):
-        events, trials = simulate_session(price_lex_config, n_trials=5)
+        events, trials, _ = simulate_session(price_lex_config, n_trials=5)
         for trial in trials:
             trial_events = sorted(
                 [e for e in events if e.trial_id == trial.trial_id],
@@ -278,7 +279,7 @@ class TestAcquisitionEventFields:
             )
 
     def test_timestamp_non_negative_and_monotone(self, price_lex_config):
-        events, trials = simulate_session(price_lex_config, n_trials=5)
+        events, trials, _ = simulate_session(price_lex_config, n_trials=5)
         for trial in trials:
             trial_events = sorted(
                 [e for e in events if e.trial_id == trial.trial_id],
@@ -289,19 +290,19 @@ class TestAcquisitionEventFields:
             assert all(ts[i + 1] >= ts[i] for i in range(len(ts) - 1))
 
     def test_dwell_ms_positive(self, price_lex_config):
-        events, _ = simulate_session(price_lex_config, n_trials=5)
+        events, _, _ = simulate_session(price_lex_config, n_trials=5)
         assert all(e.dwell_ms > 0 for e in events)
 
     def test_is_reinspection_type(self, price_lex_config):
-        events, _ = simulate_session(price_lex_config, n_trials=5)
+        events, _, _ = simulate_session(price_lex_config, n_trials=5)
         assert all(isinstance(e.is_reinspection, bool) for e in events)
 
     def test_participant_id_matches_config(self, price_lex_config):
-        events, _ = simulate_session(price_lex_config, n_trials=5)
+        events, _, _ = simulate_session(price_lex_config, n_trials=5)
         assert all(e.participant_id == "price_lex" for e in events)
 
     def test_total_acquisitions_matches_event_count(self, price_lex_config):
-        events, trials = simulate_session(price_lex_config, n_trials=10)
+        events, trials, _ = simulate_session(price_lex_config, n_trials=10)
         for trial in trials:
             trial_events = [e for e in events if e.trial_id == trial.trial_id]
             assert len(trial_events) == trial.total_acquisitions
@@ -401,7 +402,7 @@ class TestPriceLexSelectiveInspection:
         )
 
     def test_only_price_attribute_inspected(self, price_lex_no_lapse):
-        events, _ = simulate_session(price_lex_no_lapse, n_trials=20)
+        events, _, _ = simulate_session(price_lex_no_lapse, n_trials=20)
         non_price = [e for e in events if e.attribute_id != "price"]
         assert len(non_price) == 0, (
             f"price_lex inspected non-price attributes: "
@@ -409,7 +410,7 @@ class TestPriceLexSelectiveInspection:
         )
 
     def test_payne_index_is_minus_one_without_lapses(self, price_lex_no_lapse):
-        _, trials = simulate_session(price_lex_no_lapse, n_trials=20)
+        _, trials, _ = simulate_session(price_lex_no_lapse, n_trials=20)
         for t in trials:
             if t.total_acquisitions >= 2:
                 assert t.payne_index == pytest.approx(-1.0), (
@@ -417,7 +418,7 @@ class TestPriceLexSelectiveInspection:
                 )
 
     def test_prop_cells_equals_one_over_n_attrs(self, price_lex_no_lapse):
-        _, trials = simulate_session(price_lex_no_lapse, n_trials=40)
+        _, trials, _ = simulate_session(price_lex_no_lapse, n_trials=40)
         for t in trials:
             expected = 1.0 / t.n_attributes
             assert abs(t.prop_cells_inspected - expected) <= 0.05, (
@@ -429,14 +430,14 @@ class TestCalibrationPriceLex:
     """price_lex: PI -1.0 to -0.80 (near-pure dimensional), prop_cells 0.10-0.30."""
 
     def test_payne_index_range(self, price_lex_config):
-        _, trials = simulate_session(price_lex_config, n_trials=N_CALIBRATION_TRIALS)
+        _, trials, _ = simulate_session(price_lex_config, n_trials=N_CALIBRATION_TRIALS)
         median_pi = float(np.median([t.payne_index for t in trials]))
         assert -1.0 <= median_pi <= -0.80, (
             f"price_lex PI median={median_pi:.3f} not in [-1.0, -0.80]"
         )
 
     def test_prop_cells_range(self, price_lex_config):
-        _, trials = simulate_session(price_lex_config, n_trials=N_CALIBRATION_TRIALS)
+        _, trials, _ = simulate_session(price_lex_config, n_trials=N_CALIBRATION_TRIALS)
         median_prop = float(np.median([t.prop_cells_inspected for t in trials]))
         assert 0.10 <= median_prop <= 0.30, (
             f"price_lex prop_cells median={median_prop:.3f} not in [0.10, 0.30]"
@@ -453,14 +454,18 @@ class TestCalibrationCompensatory:
     """
 
     def test_payne_index_range(self, compensatory_config):
-        _, trials = simulate_session(compensatory_config, n_trials=N_CALIBRATION_TRIALS)
+        _, trials, _ = simulate_session(
+            compensatory_config, n_trials=N_CALIBRATION_TRIALS
+        )
         median_pi = float(np.median([t.payne_index for t in trials]))
         assert -0.2 <= median_pi <= 0.2, (
             f"compensatory PI median={median_pi:.3f} not in [-0.2, 0.2]"
         )
 
     def test_prop_cells_range(self, compensatory_config):
-        _, trials = simulate_session(compensatory_config, n_trials=N_CALIBRATION_TRIALS)
+        _, trials, _ = simulate_session(
+            compensatory_config, n_trials=N_CALIBRATION_TRIALS
+        )
         median_prop = float(np.median([t.prop_cells_inspected for t in trials]))
         assert 0.35 <= median_prop <= 0.75, (
             f"compensatory prop_cells median={median_prop:.3f} not in [0.35, 0.75]"
@@ -477,14 +482,18 @@ class TestCalibrationSatisficer:
     """
 
     def test_payne_index_range(self, satisficer_config):
-        _, trials = simulate_session(satisficer_config, n_trials=N_CALIBRATION_TRIALS)
+        _, trials, _ = simulate_session(
+            satisficer_config, n_trials=N_CALIBRATION_TRIALS
+        )
         median_pi = float(np.median([t.payne_index for t in trials]))
         assert -0.5 <= median_pi <= -0.3, (
             f"satisficer PI median={median_pi:.3f} not in [-0.5, -0.3]"
         )
 
     def test_prop_cells_range(self, satisficer_config):
-        _, trials = simulate_session(satisficer_config, n_trials=N_CALIBRATION_TRIALS)
+        _, trials, _ = simulate_session(
+            satisficer_config, n_trials=N_CALIBRATION_TRIALS
+        )
         median_prop = float(np.median([t.prop_cells_inspected for t in trials]))
         assert 0.15 <= median_prop <= 0.45, (
             f"satisficer prop_cells median={median_prop:.3f} not in [0.15, 0.45]"
@@ -498,14 +507,18 @@ class TestCalibrationBrandAffect:
     """
 
     def test_payne_index_range(self, brand_affect_config):
-        _, trials = simulate_session(brand_affect_config, n_trials=N_CALIBRATION_TRIALS)
+        _, trials, _ = simulate_session(
+            brand_affect_config, n_trials=N_CALIBRATION_TRIALS
+        )
         median_pi = float(np.median([t.payne_index for t in trials]))
         assert -0.9 <= median_pi <= -0.6, (
             f"brand_affect PI median={median_pi:.3f} not in [-0.9, -0.6]"
         )
 
     def test_prop_cells_range(self, brand_affect_config):
-        _, trials = simulate_session(brand_affect_config, n_trials=N_CALIBRATION_TRIALS)
+        _, trials, _ = simulate_session(
+            brand_affect_config, n_trials=N_CALIBRATION_TRIALS
+        )
         median_prop = float(np.median([t.prop_cells_inspected for t in trials]))
         assert 0.10 <= median_prop <= 0.30, (
             f"brand_affect prop_cells median={median_prop:.3f} not in [0.10, 0.30]"
@@ -516,14 +529,18 @@ class TestCalibrationLowInvolve:
     """low_involve: PI -0.1 to +0.1, prop_cells 0.20-0.45."""
 
     def test_payne_index_range(self, low_involve_config):
-        _, trials = simulate_session(low_involve_config, n_trials=N_CALIBRATION_TRIALS)
+        _, trials, _ = simulate_session(
+            low_involve_config, n_trials=N_CALIBRATION_TRIALS
+        )
         median_pi = float(np.median([t.payne_index for t in trials]))
         assert -0.1 <= median_pi <= 0.1, (
             f"low_involve PI median={median_pi:.3f} not in [-0.1, 0.1]"
         )
 
     def test_prop_cells_range(self, low_involve_config):
-        _, trials = simulate_session(low_involve_config, n_trials=N_CALIBRATION_TRIALS)
+        _, trials, _ = simulate_session(
+            low_involve_config, n_trials=N_CALIBRATION_TRIALS
+        )
         median_prop = float(np.median([t.prop_cells_inspected for t in trials]))
         assert 0.20 <= median_prop <= 0.45, (
             f"low_involve prop_cells median={median_prop:.3f} not in [0.20, 0.45]"
@@ -538,7 +555,7 @@ class TestCalibrationLowInvolve:
 class TestDwellTimes:
     def test_dwell_lognormal_positive_skew(self, price_lex_config):
         """Log-normal distribution: mean > median."""
-        events, _ = simulate_session(price_lex_config, n_trials=30)
+        events, _, _ = simulate_session(price_lex_config, n_trials=30)
         dwell_values = [e.dwell_ms for e in events]
         mean_dwell = np.mean(dwell_values)
         median_dwell = np.median(dwell_values)
@@ -547,7 +564,7 @@ class TestDwellTimes:
 
     def test_price_lex_dwell_range(self, price_lex_config):
         """price_lex mean dwell 800-1200ms."""
-        events, _ = simulate_session(price_lex_config, n_trials=30)
+        events, _, _ = simulate_session(price_lex_config, n_trials=30)
         mean_dwell = np.mean([e.dwell_ms for e in events])
         assert 800 <= mean_dwell <= 1200, (
             f"price_lex mean_dwell={mean_dwell:.0f} not in [800, 1200]"
@@ -555,7 +572,7 @@ class TestDwellTimes:
 
     def test_compensatory_dwell_range(self, compensatory_config):
         """compensatory mean dwell 1000-1800ms."""
-        events, _ = simulate_session(compensatory_config, n_trials=30)
+        events, _, _ = simulate_session(compensatory_config, n_trials=30)
         mean_dwell = np.mean([e.dwell_ms for e in events])
         assert 1000 <= mean_dwell <= 1800, (
             f"compensatory mean_dwell={mean_dwell:.0f} not in [1000, 1800]"
@@ -563,7 +580,7 @@ class TestDwellTimes:
 
     def test_brand_affect_dwell_range(self, brand_affect_config):
         """brand_affect mean dwell 600-1000ms."""
-        events, _ = simulate_session(brand_affect_config, n_trials=30)
+        events, _, _ = simulate_session(brand_affect_config, n_trials=30)
         mean_dwell = np.mean([e.dwell_ms for e in events])
         assert 600 <= mean_dwell <= 1000, (
             f"brand_affect mean_dwell={mean_dwell:.0f} not in [600, 1000]"
@@ -571,7 +588,7 @@ class TestDwellTimes:
 
     def test_low_involve_dwell_range(self, low_involve_config):
         """low_involve mean dwell 400-800ms."""
-        events, _ = simulate_session(low_involve_config, n_trials=30)
+        events, _, _ = simulate_session(low_involve_config, n_trials=30)
         mean_dwell = np.mean([e.dwell_ms for e in events])
         assert 400 <= mean_dwell <= 800, (
             f"low_involve mean_dwell={mean_dwell:.0f} not in [400, 800]"
@@ -584,7 +601,7 @@ class TestDwellTimes:
         is 0.50 (neutral), yielding E[dwell] ≈ 875ms with the continuous dwell
         model (no archetype label override).
         """
-        events, _ = simulate_session(satisficer_config, n_trials=30)
+        events, _, _ = simulate_session(satisficer_config, n_trials=30)
         mean_dwell = np.mean([e.dwell_ms for e in events])
         assert 750 <= mean_dwell <= 1400, (
             f"satisficer mean_dwell={mean_dwell:.0f} not in [750, 1400]"
@@ -607,7 +624,7 @@ class TestFatigueAndTimePressure:
             _make_strategy(Strategy.COMPENSATORY, InspectionDepth.DEEP),
             seed=42,
         )
-        _, trials = simulate_session(config, n_trials=25)
+        _, trials, _ = simulate_session(config, n_trials=25)
         early_prop = np.mean(
             [t.prop_cells_inspected for t in trials if t.trial_index < 15]
         )
@@ -620,7 +637,7 @@ class TestFatigueAndTimePressure:
 
     def test_time_pressure_occurs(self, price_lex_config):
         """~30% of trials should have time_pressure=True."""
-        _, trials = simulate_session(price_lex_config, n_trials=60)
+        _, trials, _ = simulate_session(price_lex_config, n_trials=60)
         pressure_count = sum(1 for t in trials if t.time_pressure)
         proportion = pressure_count / len(trials)
         assert 0.15 <= proportion <= 0.45, (
