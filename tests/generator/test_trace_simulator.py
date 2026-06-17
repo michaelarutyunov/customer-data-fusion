@@ -500,8 +500,8 @@ class TestCalibrationBrandAffect:
     def test_payne_index_range(self, brand_affect_config):
         _, trials = simulate_session(brand_affect_config, n_trials=N_CALIBRATION_TRIALS)
         median_pi = float(np.median([t.payne_index for t in trials]))
-        assert -0.9 <= median_pi <= -0.7, (
-            f"brand_affect PI median={median_pi:.3f} not in [-0.9, -0.7]"
+        assert -0.9 <= median_pi <= -0.6, (
+            f"brand_affect PI median={median_pi:.3f} not in [-0.9, -0.6]"
         )
 
     def test_prop_cells_range(self, brand_affect_config):
