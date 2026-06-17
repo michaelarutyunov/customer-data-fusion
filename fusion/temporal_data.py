@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from collections import defaultdict
 
 import torch
 
@@ -31,14 +32,14 @@ def generate_monthly_temporal_embeddings(
     Args:
         monthly_data_path: Path to monthly observations JSONL
         output_path: Where to save the temporal embeddings cache
-        device: Device to run on
+        device: Device to run on (currently unused, reserved for Task 8)
     """
+    _ = device  # Reserved for future use in Task 8
     print(f"Loading monthly data from {monthly_data_path}...")
     with open(monthly_data_path) as f:
         monthly_records = [json.loads(line) for line in f]
 
     # Group by participant_id
-    from collections import defaultdict
 
     monthly_by_participant = defaultdict(list)
     for record in monthly_records:
