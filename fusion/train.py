@@ -741,6 +741,26 @@ def train(
     # Build or load embedding cache
     embeddings = build_cache(encoders, cache_path, device)
 
+    # Load temporal data if provided
+    monthly_embeddings = None
+    if temporal_data is not None and temporal_weight > 0:
+        temporal_path = Path(temporal_data)
+        if not temporal_path.exists():
+            raise FileNotFoundError(f"Temporal data not found: {temporal_path}")
+
+        print(f"Loading temporal embeddings from {temporal_path}...")
+        temporal_cache = torch.load(temporal_path, map_location=device, weights_only=True)
+        monthly_embeddings = temporal_cache["monthly_embeddings"]  # [N, 12, 128]
+        print(f"Temporal embeddings loaded: shape {monthly_embeddings.shape}")
+
+        # Validate participant alignment
+        temporal_participant_ids = temporal_cache["participant_ids"]
+        if set(temporal_participant_ids) != set(participant_ids):
+            raise ValueError(
+                "Temporal data participant IDs don't match cache. "
+                f"Cache has {len(participant_ids)}, temporal has {len(temporal_participant_ids)}"
+            )
+
     # Split participants
     participant_ids: list[str] = embeddings["participant_ids"]  # type: ignore[assignment]
     train_ids, val_ids = split_by_participant(participant_ids)
@@ -804,6 +824,7 @@ def train(
         model.train()
         epoch_ce = 0.0
         epoch_nt = 0.0
+        epoch_temp = 0.0
         n_batches = 0
 
         for batch_embs, batch_labels in train_loader:
@@ -828,7 +849,14 @@ def train(
             _, emb_v2 = model.forward_with_embedding(fusion_v2)
             nt_loss = nt_xent_fusion(emb_v1, emb_v2, nt_xent_temperature)
 
-            loss = ce_loss + lambda_contrastive * nt_loss
+            # Temporal loss: adjacent-month positive pairs
+            temp_loss = torch.tensor(0.0, device=device)
+            if monthly_embeddings is not None and temporal_weight > 0:
+                # TODO: Add proper batching for temporal loss computation (deferred)
+                # For now: skip temporal loss in first implementation
+                pass
+
+            loss = ce_loss + lambda_contrastive * nt_loss + temporal_weight * temp_loss
 
             optimizer.zero_grad()
             loss.backward()
@@ -836,10 +864,12 @@ def train(
 
             epoch_ce += ce_loss.item()
             epoch_nt += nt_loss.item()
+            epoch_temp += temp_loss.item()
             n_batches += 1
 
         avg_ce = epoch_ce / n_batches
         avg_nt = epoch_nt / n_batches
+        avg_temp = epoch_temp / n_batches
 
         # Validation
         model.eval()
@@ -869,7 +899,7 @@ def train(
 
         print(
             f"Epoch {epoch + 1}/{n_epochs}: "
-            f"ce={avg_ce:.4f}  nt={avg_nt:.4f}  "
+            f"ce={avg_ce:.4f}  nt={avg_nt:.4f}  temp={avg_temp:.4f}  "
             f"val_loss={avg_val_loss:.4f}  val_acc={val_acc:.4f}"
         )
 
@@ -878,6 +908,7 @@ def train(
                 {
                     "train_ce_loss": avg_ce,
                     "train_nt_loss": avg_nt,
+                    "train_temp_loss": avg_temp,
                     "val_loss": avg_val_loss,
                     "val_acc": val_acc,
                 },
