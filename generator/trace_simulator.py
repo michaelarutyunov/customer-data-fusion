@@ -33,6 +33,7 @@ from schemas.persona import (
     Strategy,
     StrategyParams,
 )
+from schemas.product import Product
 from schemas.trace import AcquisitionEvent, EventType, TrialRecord
 
 log = structlog.get_logger(__name__)
@@ -688,6 +689,92 @@ def _assign_event_types(
         prev_attr = attr
 
     return typed_events
+
+
+def _compute_choice_from_inspected_cells(
+    trial_events: list[AcquisitionEvent],
+    trial_strategy: StrategyParams,
+    alternative_products: dict[str, Product],
+    temperature: float = 1.0,
+    rng: np.random.Generator = None,
+) -> Optional[str]:
+    """Compute choice based on inspected cells and strategy.
+
+    This couples the trace (what was inspected) to the choice,
+    enabling the CDT encoding the trace to predict the decision.
+
+    Parameters
+    ----------
+    trial_events:
+        List of acquisition events from the trace simulation.
+    trial_strategy:
+        Strategy parameters for this trial.
+    alternative_products:
+        Mapping from slot letters to Product objects.
+    temperature:
+        Softmax temperature for choice probability (default 1.0).
+    rng:
+        Random number generator (uses default if None).
+
+    Returns
+    -------
+    chosen_slot:
+        The slot letter of the chosen alternative, or None if no events.
+    """
+    if rng is None:
+        rng = np.random.default_rng()
+
+    if len(trial_events) == 0:
+        return None
+
+    # Extract inspected attribute values
+    inspected_attrs = {}
+    for event in trial_events:
+        if event.attribute_id is not None:
+            attr, value = event.attribute_id.split("=")
+            inspected_attrs[attr] = float(value)
+
+    # Compute utility per alternative based on strategy
+    utilities = {}
+    for slot, product in alternative_products.items():
+        if trial_strategy.primary_strategy == Strategy.LEXICOGRAPHIC:
+            # Choose best on first_attribute among inspected cells
+            first_attr = trial_strategy.first_attribute
+            if first_attr in inspected_attrs:
+                utilities[slot] = inspected_attrs[first_attr]
+            else:
+                utilities[slot] = 0.0  # Penalty for unobserved attribute
+        elif trial_strategy.primary_strategy == Strategy.COMPENSATORY:
+            # Weighted sum over inspected attributes
+            utility = 0.0
+            if trial_strategy.attribute_weights:
+                for attr, weight in trial_strategy.attribute_weights.items():
+                    if attr in inspected_attrs:
+                        utility += weight * inspected_attrs[attr]
+                utilities[slot] = utility
+            else:
+                utilities[slot] = 0.0
+        else:
+            # Fallback to random for unknown strategies
+            utilities[slot] = rng.uniform(0, 1)
+
+    # Add strategy lapse noise
+    lapse_noise = rng.normal(0, trial_strategy.p_strategy_lapse)
+    for slot in utilities:
+        utilities[slot] += lapse_noise
+
+    # Softmax with pinned temperature
+    exp_utilities = {k: np.exp(u / temperature) for k, u in utilities.items()}
+    sum_exp = sum(exp_utilities.values())
+
+    if sum_exp == 0:
+        return str(rng.choice(list(alternative_products.keys())))
+
+    probs = {k: v / sum_exp for k, v in exp_utilities.items()}
+
+    # Sample choice
+    chosen_slot = rng.choice(list(probs.keys()), p=list(probs.values()))
+    return chosen_slot
 
 
 # ── Main simulation entry point ──────────────────────────────────────────────
