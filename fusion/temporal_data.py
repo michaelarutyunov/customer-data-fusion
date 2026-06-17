@@ -18,8 +18,6 @@ from pathlib import Path
 from collections import defaultdict
 
 import torch
-
-import torch
 import torch.nn.functional as F
 
 from schemas import CHECKPOINT_PATHS, EMBEDDING_DIM
