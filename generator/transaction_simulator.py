@@ -18,6 +18,7 @@ Phase 2c additions:
 
 from __future__ import annotations
 
+import json
 import math
 from typing import Optional
 
@@ -25,45 +26,49 @@ import numpy as np
 import structlog
 
 from schemas.persona import PersonaConfig
+from schemas.product import Product
 from schemas.transaction import Channel, PaymentMethod, PurchaseType, TransactionRecord
 
 logger = structlog.get_logger(__name__)
 
 # ---------------------------------------------------------------------------
-# Product catalog: 3 categories × 3 tiers = 27 SKUs
+# Product catalog: shared Product schema loaded from data/synthetic/products.jsonl
 # ---------------------------------------------------------------------------
 
-_CATEGORIES = ["electronics", "household", "personal"]
-_CATALOG_TIERS = ["budget", "mid", "premium"]  # tier names used in SKU IDs
+def _load_products_for_category(category: str) -> dict[str, Product]:
+    """Load products for a given category from the shared product catalog."""
+    products = {}
+    products_path = "data/synthetic/products.jsonl"
+    with open(products_path) as f:
+        for line in f:
+            product = json.loads(line)
+            if product["category"] == category:
+                products[product["product_id"]] = Product(**product)
+    return products
 
-# Base prices per (category, tier) — used to derive unit_price from price_paid_normalised
-_BASE_PRICES: dict[str, dict[str, float]] = {
-    "electronics": {"budget": 29.99, "mid": 79.99, "premium": 199.99},
-    "household": {"budget": 9.99, "mid": 24.99, "premium": 59.99},
-    "personal": {"budget": 4.99, "mid": 14.99, "premium": 34.99},
-}
 
-# Pre-built SKU catalog: list of (sku_id, category, tier, base_price)
-_SKU_CATALOG: list[tuple[str, str, str, float]] = []
-for _cat in _CATEGORIES:
-    for _tier in _CATALOG_TIERS:
-        for _seq in range(1, 4):  # 3 SKUs per (category, tier)
-            _sku_id = f"SKU-{_cat}-{_tier}-{_seq:03d}"
-            _base = _BASE_PRICES[_cat][_tier]
-            _SKU_CATALOG.append((_sku_id, _cat, _tier, _base))
+# Load electronics products at module init (lazy load in _choose_sku if needed)
+_ELECTRONICS_PRODUCTS = _load_products_for_category("electronics")
 
-# Category indices for fast lookup
-_CATALOG_ARR = np.array([(s, c, t, p) for s, c, t, p in _SKU_CATALOG], dtype=object)
-_CATALOG_BASE_PRICES = np.array([item[3] for item in _SKU_CATALOG], dtype=float)
-_CATALOG_TIERS_ARR = np.array([item[2] for item in _SKU_CATALOG])
-_CATALOG_CATEGORIES_ARR = np.array([item[1] for item in _SKU_CATALOG])
-_N_SKUS = len(_SKU_CATALOG)
-
-# Tier indicator for conditional logit: 0=budget, 1=mid, 2=premium
-_TIER_INDICATOR = np.array(
-    [{"budget": 0, "mid": 1, "premium": 2}[t] for _, _, t, _ in _SKU_CATALOG],
-    dtype=float,
+# Convert to numpy arrays for fast logit calculations
+_PRODUCT_IDS = np.array(list(_ELECTRONICS_PRODUCTS.keys()))
+_PRICES_NORMALISED = np.array(
+    [p.price_normalised for p in _ELECTRONICS_PRODUCTS.values()], dtype=float
 )
+_QUALITIES_NORMALISED = np.array(
+    [p.quality_normalised for p in _ELECTRONICS_PRODUCTS.values()], dtype=float
+)
+
+# Map quality tiers (0.0 → value/budget, 0.5 → mid, 1.0 → premium)
+_QUALITY_TIERS = np.zeros_like(_QUALITIES_NORMALISED)
+_QUALITY_TIERS[_QUALITIES_NORMALISED == 0.0] = 0  # budget
+_QUALITY_TIERS[_QUALITIES_NORMALISED == 0.5] = 1  # mid
+_QUALITY_TIERS[_QUALITIES_NORMALISED == 1.0] = 2  # premium
+
+# Base prices for unit_price calculation (map from normalized to dollar range)
+_BASE_PRICE_MIN = 29.99  # budget electronics
+_BASE_PRICE_MAX = 199.99  # premium electronics
+_BASE_PRICES = _BASE_PRICE_MIN + _PRICES_NORMALISED * (_BASE_PRICE_MAX - _BASE_PRICE_MIN)
 
 # ---------------------------------------------------------------------------
 # Brand tiers (legacy compatibility — still used for brand_tier field)
@@ -238,23 +243,40 @@ def _choose_sku(
     brand_loyalty: float,
 ) -> tuple[str, str, float]:
     """
-    Choose a SKU via conditional logit model.
+    Choose a product via conditional logit model.
 
     Utility = beta_price * log(unit_price) + beta_brand * tier_indicator + epsilon
 
     beta_price is negative (from price_sensitivity), beta_brand is positive (from brand_loyalty).
-    Returns (sku_id, tier, base_price).
+    Returns (product_id, tier, base_price).
     """
-    # Filter catalog to the requested category
-    cat_mask = _CATALOG_CATEGORIES_ARR == category
-    indices = np.where(cat_mask)[0]
-
-    if len(indices) == 0:
-        # Fallback: use first 9 SKUs (first category)
-        indices = np.arange(9)
-
-    base_prices = _CATALOG_BASE_PRICES[indices]
-    tier_indicators = _TIER_INDICATOR[indices]
+    # Load products for the requested category (electronics for now)
+    if category == "electronics":
+        product_ids = _PRODUCT_IDS
+        base_prices = _BASE_PRICES
+        tier_indicators = _QUALITY_TIERS
+    else:
+        # Fallback for other categories: load on-demand
+        products = _load_products_for_category(category)
+        if not products:
+            # Emergency fallback: use electronics catalog
+            logger.warning(
+                "no_products_for_category",
+                category=category,
+                fallback="electronics",
+            )
+            product_ids = _PRODUCT_IDS
+            base_prices = _BASE_PRICES
+            tier_indicators = _QUALITY_TIERS
+        else:
+            product_ids = np.array(list(products.keys()))
+            prices_norm = np.array([p.price_normalised for p in products.values()])
+            qualities_norm = np.array([p.quality_normalised for p in products.values()])
+            base_prices = _BASE_PRICE_MIN + prices_norm * (_BASE_PRICE_MAX - _BASE_PRICE_MIN)
+            tier_indicators = np.zeros_like(qualities_norm)
+            tier_indicators[qualities_norm == 0.0] = 0
+            tier_indicators[qualities_norm == 0.5] = 1
+            tier_indicators[qualities_norm == 1.0] = 2
 
     # Conditional logit coefficients
     beta_price = -(
@@ -269,17 +291,15 @@ def _choose_sku(
     utility = beta_price * log_prices + beta_brand * tier_indicators
 
     # Add Gumbel noise (epsilon) → softmax choice probabilities
-    noise = rng.gumbel(0, 1, size=len(indices))
+    noise = rng.gumbel(0, 1, size=len(product_ids))
     perturbed_utility = utility + noise
 
-    chosen_local = int(np.argmax(perturbed_utility))
-    chosen_idx = indices[chosen_local]
+    chosen_idx = int(np.argmax(perturbed_utility))
+    product_id = product_ids[chosen_idx]
+    tier = ["budget", "mid", "premium"][int(tier_indicators[chosen_idx])]
+    base_price = base_prices[chosen_idx]
 
-    sku_id = _SKU_CATALOG[chosen_idx][0]
-    tier = _SKU_CATALOG[chosen_idx][2]
-    base_price = _SKU_CATALOG[chosen_idx][3]
-
-    return sku_id, tier, base_price
+    return product_id, tier, base_price
 
 
 def simulate_transactions(
@@ -352,10 +372,9 @@ def simulate_transactions(
         channel = channels[int(rng.choice(len(channels), p=channel_probs))]
         brand_tier = _sample_brand_tier(rng, params.brand_loyalty)
         purchase_type = _sample_purchase_type(rng, params.brand_loyalty, on_promo)
-        product_id = f"prod_{category}_{brand_tier}_{int(rng.integers(1000, 9999))}"
 
-        # --- Phase 2c: SKU choice via conditional logit ---
-        sku_id, sku_tier, base_price = _choose_sku(
+        # --- Phase 2c: Product choice via conditional logit ---
+        chosen_product_id, sku_tier, base_price = _choose_sku(
             rng, category, params.price_sensitivity, params.brand_loyalty
         )
         unit_price = round(price_pct * base_price, 2)
@@ -375,7 +394,7 @@ def simulate_transactions(
                 transaction_id=f"tx_{participant_id}_{i:04d}",
                 days_before_session=days_before,
                 category=category,
-                product_id=product_id,
+                product_id=chosen_product_id,
                 brand_tier=brand_tier,
                 price_paid_normalised=price_pct,
                 quantity=quantity,
@@ -383,7 +402,7 @@ def simulate_transactions(
                 purchase_type=purchase_type,
                 on_promotion=on_promo,
                 persona_id=config.persona_id,
-                sku=sku_id,
+                sku=chosen_product_id,  # Use product_id as SKU for now
                 unit_price=unit_price,
                 discount_applied=discount_applied,
                 payment_method=payment_method,
