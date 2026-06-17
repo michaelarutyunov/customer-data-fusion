@@ -163,8 +163,8 @@ class TestSimulateSessionAPI:
         assert len(trials) == 5
 
     def test_custom_category(self, price_lex_config):
-        _, trials = simulate_session(price_lex_config, category="appliances")
-        assert all(t.category == "appliances" for t in trials)
+        _, trials = simulate_session(price_lex_config, category="home_goods")
+        assert all(t.category == "home_goods" for t in trials)
 
     def test_reproducible_with_same_seed(self, price_lex_config):
         events1, trials1 = simulate_session(price_lex_config, n_trials=10)

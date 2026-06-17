@@ -836,33 +836,51 @@ def _get_attribute_value(product: Product, attr: str) -> float | None:
     return 0.5  # Default fallback
 
 
-def _load_product_for_slot(slot: str, category: str) -> Product:
-    """Load a random product from products.jsonl for the given category and slot.
+def _load_category_products(
+    category: str,
+    products_path: str,
+    rng: np.random.Generator,
+) -> list[Product]:
+    """Load all products for a category once.
 
     Args:
-        slot: Alternative slot identifier (e.g., "A", "B", "C")
-        category: Product category (e.g., "electronics", "fashion", "home_goods")
+        category: Product category to filter
+        products_path: Path to products.jsonl
+        rng: Random number generator (for consistency, though not used in loading)
 
     Returns:
-        Product object for this slot
-
-    Note:
-        Currently loads a random product from the catalog. In a future iteration,
-        this should be replaced with deterministic product assignment per trial
-        to ensure consistent choice sets across participants.
+        List of Product objects for the category
     """
-    products_path = "data/synthetic/products.jsonl"
     category_products = []
-
     with open(products_path, "r") as f:
         for line in f:
             if line.strip():
                 prod_dict = json.loads(line)
                 if prod_dict.get("category") == category:
                     category_products.append(Product(**prod_dict))
+    return category_products
 
-    # Sample a random product for this slot
-    rng = np.random.default_rng()
+
+def _load_product_for_slot(
+    slot: str,
+    category: str,
+    products_by_category: dict[str, list[Product]],
+    rng: np.random.Generator,
+) -> Product:
+    """Load random product for slot from cached category products.
+
+    Args:
+        slot: Slot identifier (e.g., "A", "B", "C")
+        category: Product category
+        products_by_category: Cached products by category
+        rng: Random number generator for sampling
+
+    Returns:
+        Random Product from the category
+    """
+    category_products = products_by_category.get(category, [])
+    if not category_products:
+        raise ValueError(f"No products found for category: {category}")
     return rng.choice(category_products)
 
 
@@ -900,6 +918,12 @@ def simulate_session(
       trials — one TrialRecord per trial.
     """
     rng = np.random.default_rng(config.random_seed)
+
+    # Cache products by category for this session (single category per session)
+    products_path = "data/synthetic/products.jsonl"
+    _products_by_category: dict[str, list[Product]] = {
+        category: _load_category_products(category, products_path, rng)
+    }
 
     session_id = str(uuid.uuid4())
     if participant_id is None:
@@ -1021,9 +1045,10 @@ def simulate_session(
         prop_cells = n_total / n_cells if n_cells > 0 else 0.0
         payne_index = _compute_payne_index(trial_events)
 
-        # Load products for this trial
+        # Load products for this trial (uses cached products by category)
         alternative_products = {
-            slot: _load_product_for_slot(slot, category) for slot in alts
+            slot: _load_product_for_slot(slot, category, _products_by_category, rng)
+            for slot in alts
         }
         final_choice = _compute_choice_from_inspected_cells(
             trial_events,
