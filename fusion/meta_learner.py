@@ -91,6 +91,13 @@ class LateFusionMetaLearner(nn.Module):
             )
             nn.init.normal_(self.missing_embedding, mean=0.0, std=0.02)
 
+        # Learnable TEMPORAL MISSING embedding: pads missing monthly observations.
+        # Used when participant has < 12 months of transaction/clickstream data.
+        self.temporal_missing_embedding = nn.Parameter(
+            torch.zeros(per_modality_dim)
+        )
+        nn.init.normal_(self.temporal_missing_embedding, mean=0.0, std=0.02)
+
         if phase == "1":
             # Phase 1: Logistic regression baseline
             # [B, 512] → Linear(512, 7) → [B, 7]
