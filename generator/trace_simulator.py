@@ -18,6 +18,7 @@ simulate_session(config, category, n_trials) -> (events, trials)
 
 from __future__ import annotations
 
+import json
 import math
 import uuid
 from typing import Optional
@@ -696,7 +697,7 @@ def _compute_choice_from_inspected_cells(
     trial_strategy: StrategyParams,
     alternative_products: dict[str, Product],
     temperature: float = 1.0,
-    rng: np.random.Generator = None,
+    rng: np.random.Generator | None = None,
 ) -> Optional[str]:
     """Compute choice based on inspected cells and strategy.
 
@@ -727,21 +728,27 @@ def _compute_choice_from_inspected_cells(
     if len(trial_events) == 0:
         return None
 
-    # Extract inspected attribute values
-    inspected_attrs = {}
+    # Extract inspected attributes per alternative
+    inspected_attrs_per_alt: dict[str, dict[str, float]] = {}
     for event in trial_events:
-        if event.attribute_id is not None:
-            attr, value = event.attribute_id.split("=")
-            inspected_attrs[attr] = float(value)
+        if event.attribute_id is not None and event.alternative_id is not None:
+            alt = event.alternative_id
+            attr = event.attribute_id
+            if alt not in inspected_attrs_per_alt:
+                inspected_attrs_per_alt[alt] = {}
+            inspected_attrs_per_alt[alt][attr] = True  # Mark as inspected
 
     # Compute utility per alternative based on strategy
     utilities = {}
     for slot, product in alternative_products.items():
+        inspected_for_slot = inspected_attrs_per_alt.get(slot, {})
+
         if trial_strategy.primary_strategy == Strategy.LEXICOGRAPHIC:
             # Choose best on first_attribute among inspected cells
             first_attr = trial_strategy.first_attribute
-            if first_attr in inspected_attrs:
-                utilities[slot] = inspected_attrs[first_attr]
+            if first_attr in inspected_for_slot:
+                value = _get_attribute_value(product, first_attr)
+                utilities[slot] = value if value is not None else 0.0
             else:
                 utilities[slot] = 0.0  # Penalty for unobserved attribute
         elif trial_strategy.primary_strategy == Strategy.COMPENSATORY:
@@ -749,8 +756,10 @@ def _compute_choice_from_inspected_cells(
             utility = 0.0
             if trial_strategy.attribute_weights:
                 for attr, weight in trial_strategy.attribute_weights.items():
-                    if attr in inspected_attrs:
-                        utility += weight * inspected_attrs[attr]
+                    if attr in inspected_for_slot:
+                        value = _get_attribute_value(product, attr)
+                        if value is not None:
+                            utility += weight * value
                 utilities[slot] = utility
             else:
                 utilities[slot] = 0.0
@@ -775,6 +784,86 @@ def _compute_choice_from_inspected_cells(
     # Sample choice
     chosen_slot = rng.choice(list(probs.keys()), p=list(probs.values()))
     return chosen_slot
+
+
+def _get_attribute_value(product: Product, attr: str) -> float | None:
+    """Get normalized attribute value from a product.
+
+    Maps trace attribute names to Product fields.
+
+    Args:
+        product: Product object
+        attr: Attribute name from trace (e.g., "price", "brand", "quality")
+
+    Returns:
+        Normalized value [0, 1] or None if attribute not available
+    """
+    attr_to_field = {
+        "price": "price_normalised",
+        "quality": "quality_normalised",
+        "brand": "brand",  # Will be converted to normalized value
+        "features": "features",  # Will be converted to normalized value
+    }
+
+    if attr not in attr_to_field:
+        return None
+
+    field = attr_to_field[attr]
+    value = getattr(product, field, None)
+
+    if value is None:
+        return None
+
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    if attr == "brand":
+        # Convert brand to normalized value based on quality
+        # Higher quality brands get higher values
+        brand_quality_map = {
+            "Sony": 0.8,
+            "Samsung": 0.75,
+            "Nike": 0.85,
+            "Adidas": 0.8,
+            "Apple": 0.9,
+        }
+        return float(brand_quality_map.get(value, 0.5))
+
+    if attr == "features":
+        # Convert features list to normalized value (count / max_features)
+        return float(len(value)) / 4.0  # Assume max 4 features
+
+    return 0.5  # Default fallback
+
+
+def _load_product_for_slot(slot: str, category: str) -> Product:
+    """Load a random product from products.jsonl for the given category and slot.
+
+    Args:
+        slot: Alternative slot identifier (e.g., "A", "B", "C")
+        category: Product category (e.g., "electronics", "fashion", "home_goods")
+
+    Returns:
+        Product object for this slot
+
+    Note:
+        Currently loads a random product from the catalog. In a future iteration,
+        this should be replaced with deterministic product assignment per trial
+        to ensure consistent choice sets across participants.
+    """
+    products_path = "data/synthetic/products.jsonl"
+    category_products = []
+
+    with open(products_path, "r") as f:
+        for line in f:
+            if line.strip():
+                prod_dict = json.loads(line)
+                if prod_dict.get("category") == category:
+                    category_products.append(Product(**prod_dict))
+
+    # Sample a random product for this slot
+    rng = np.random.default_rng()
+    return rng.choice(category_products)
 
 
 # ── Main simulation entry point ──────────────────────────────────────────────
@@ -932,8 +1021,18 @@ def simulate_session(
         prop_cells = n_total / n_cells if n_cells > 0 else 0.0
         payne_index = _compute_payne_index(trial_events)
 
-        final_choice: Optional[str] = str(rng.choice(alts)) if n_total > 0 else None
-        confidence: Optional[int] = int(rng.integers(1, 6))
+        # Load products for this trial
+        alternative_products = {
+            slot: _load_product_for_slot(slot, category) for slot in alts
+        }
+        final_choice = _compute_choice_from_inspected_cells(
+            trial_events,
+            strategy_params,
+            alternative_products,
+            temperature=1.0,
+            rng=rng,
+        )
+        confidence: Optional[int] = int(rng.integers(1, 6)) if n_total > 0 else None
 
         trial_record = TrialRecord(
             participant_id=participant_id,
