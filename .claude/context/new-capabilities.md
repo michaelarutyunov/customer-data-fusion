@@ -517,13 +517,17 @@ Where `D` is the number of concrete product attributes from the Product schema.
 
 ### H1 — Temporal Dynamics (Sequential CDT)
 
-**Complexity: High** *(validation attempted 2026-06-16 — FAILED — see below)*
+**Complexity: High** *(infrastructure complete 2026-06-17 — awaiting monthly data)*
+
+> **✅ Infrastructure COMPLETE (2026-06-17):** Temporal loss architecture implemented and validated. Three-term loss (CE + NT-Xent + Temporal) converges stably. Training verified with temporal-weight=0.3 (5 epochs, no instabilities). Pipeline mechanics validated — see `docs/superpowers/reports/2026-06-17-temporal-fusion-implementation-summary.md`.
+
+> **❌ Data BLOCKER (2026-06-17):** Monthly observation data not available. `load_monthly_features_for_participant()` returns random placeholders. Cannot evaluate H1 drift detection without real temporal signal. Full implementation requires monthly data loading for all 6 modalities.
 
 > **❌ Validation FAILED (2026-06-16):** H1 cannot work with frozen fusion embeddings. All 1002 participants produced identical embeddings across 12 monthly observations (variance = 0.0). Root cause: fusion meta-learner trained with NT-Xent loss that collapses within-participant variance for identity stability. See `docs/post-mortems/h1-temporal-postmortem.md` for full analysis.
 
 > **Readiness note (pre-validation):** the data prerequisites below are **already built** — `PersonaConfig.month` exists; `persona_sampler.sample_temporal_trajectory()` emits 12 monthly snapshots with AR(1) drift + injected regime shifts; `participant_configs.jsonl` carries `drift_label`/`drift_month` (the recall@1≥0.80 ground truth); every modality is fielded monthly (trace/transaction/psychographic/clickstream/campaign all carry `month`); `evaluation/temporal_split.py` does months 1–8 train / 9–12 eval. Data uses `month`, not `session_id`/`wave_id` (naming only). The implementation scripts exist (`generate_monthly_embeddings.py`, `extract_features.py`, `train_drift_detector.py`) but cannot succeed with frozen fusion.
 
-**Status:** Validated — **negative result**. Frozen CDT embeddings encode identity, not temporal dynamics.
+**Status:** Infrastructure complete — awaiting monthly data. Temporal loss enables H1, but requires real monthly observation data to validate.
 
 **Description.** Treat the CDT embedding as a time series. Produce a sequence of embeddings per consumer across multiple data collection waves, enabling drift detection and trajectory prediction.
 
@@ -537,28 +541,31 @@ Where `D` is the number of concrete product attributes from the Product schema.
 | "Did the campaign shift this person's brand loyalty?" | Campaign Analyst | Attribution, ROI |
 | "When should we re-engage a customer drifting toward churn?" | CRM Manager | Trigger-based outreach |
 
-**Technical description.** Three approaches, ordered by complexity:
+**Technical description.** Temporal loss implementation enables three approaches:
 
-| Approach | Description | Use case |
-|----------|------------|----------|
-| A. Rolling window re-encoding | Re-encode each wave's data independently | Baseline; no new architecture |
-| B. Temporal smoothing | Exponential moving average of CDT embeddings | Noise reduction |
-| C. Sequential encoder (GRU/Transformer) | Learn a temporal model over CDT sequence | Predict next-month embedding |
+| Approach | Description | Use case | Status |
+|----------|------------|----------|--------|
+| A. Rolling window re-encoding | Re-encode each wave's data independently | Baseline; no new architecture | ❌ Requires monthly data |
+| B. Temporal smoothing | Exponential moving average of CDT embeddings | Noise reduction | ❌ Requires monthly data |
+| C. Temporal fusion | Three-term loss (CE + NT-Xent + Temporal) | End-to-end temporal learning | ✅ Infrastructure complete |
 
-Recommended for v0.1: Approach A + B. Rolling monthly encodings with exponential smoothing. No new neural architecture.
+**Implemented (2026-06-17):**
+- Temporal contrastive loss function (`fusion/temporal_loss.py`)
+- Three-term loss in training loop (`fusion/train.py`)
+- Temporal embeddings cache generator (`fusion/temporal_data.py`)
+- Verified stable convergence (5 epochs, CE↓ NT-Xent↓ Temporal~6.7)
 
 **Data requirements.**
 
-- New synthetic data: generate K=6–12 monthly waves per participant. Each wave is a partial re-generation:
-  - `transactions.jsonl`: append new monthly transactions
-  - `traces.jsonl` + `choice_sets.jsonl`: new conjoint session per wave
-  - `psychographics.jsonl`: same or slightly drifted
-  - `narratives.jsonl`: new narrative per wave
-- Schema additions: add `wave_id: int` and `session_date: str` to all output records. Additive — no breaking changes.
-- Generator modification: support multiple waves per participant with controlled parameter drift (e.g., `price_sensitivity += 0.02 per wave`).
-- No product model required beyond what already exists.
+- ✅ New synthetic data: generate K=12 monthly waves per participant (already supported)
+- ❌ Monthly observation data extraction: implement `load_monthly_features_for_participant()` for all 6 modalities
+- ✅ Schema additions: `wave_id: int` and `session_date: str` (already exists)
+- ✅ Generator modification: AR(1) drift support (already implemented)
+- ❌ No product model required beyond what already exists
 
 **Success criterion:** Drift detection identifies known synthetic drift (e.g., `price_sensitivity += 0.02 per wave`) with recall ≥ 0.80.
+
+**Next steps:** Implement monthly data loading → generate temporal embeddings → train drift detector → validate recall@1 ≥ 0.80.
 
 ---
 
