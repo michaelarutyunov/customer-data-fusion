@@ -26,6 +26,14 @@ from typing import Optional
 import numpy as np
 import structlog
 
+from generator.choice_model import (
+    BOARD_ATTRIBUTES as _ATTRIBUTES,
+    GAIN,
+    TAU,
+    compensatory_utility,
+    encode_board,
+    goodness_of,
+)
 from generator.persona_sampler import GENERATOR_SPREAD
 from schemas.persona import (
     InspectionDepth,
@@ -63,16 +71,6 @@ _DEPTH_ORDER = [
     InspectionDepth.VARIABLE,
 ]
 
-_ATTRIBUTES = [
-    "price",
-    "brand",
-    "quality",
-    "warranty",
-    "rating",
-    "features",
-    "availability",
-    "design",
-]
 _ALTERNATIVES = ["A", "B", "C", "D", "E", "F", "G"]
 
 # ── strategy mixture: logit coefficients for softmax ─────────────────────────
@@ -697,33 +695,21 @@ def _compute_choice_from_inspected_cells(
     trial_events: list[AcquisitionEvent],
     trial_strategy: StrategyParams,
     alternative_products: dict[str, Product],
-    temperature: float = 1.0,
+    n_attrs: int,
+    z: LatentDeviation,
+    price_sensitivity: float,
+    brand_loyalty: float,
     rng: np.random.Generator | None = None,
 ) -> tuple[Optional[str], dict[str, float]]:
-    """Compute choice based on inspected cells and strategy.
+    """Compute choice from inspected cells (Phase 0 SPEC §0.3–§0.5).
 
-    This couples the trace (what was inspected) to the choice,
-    enabling the CDT encoding the trace to predict the decision.
+    Implements all six strategies over the §0.1 board, with §0.3 slot exclusion
+    (a slot with no inspected attribute is not choosable) and §0.4 z.brand_lean
+    coupling in the compensatory/default-weight rules. The preference softmax
+    uses §0.5 GAIN/TAU; RANDOM lapses and degenerate trials are uniform.
 
-    Parameters
-    ----------
-    trial_events:
-        List of acquisition events from the trace simulation.
-    trial_strategy:
-        Strategy parameters for this trial.
-    alternative_products:
-        Mapping from slot letters to Product objects.
-    temperature:
-        Softmax temperature for choice probability (default 1.0).
-    rng:
-        Random number generator (uses default if None).
-
-    Returns
-    -------
-    chosen_slot:
-        The slot letter of the chosen alternative, or None if no events.
-    probabilities:
-        Dictionary mapping slot letters to choice probabilities.
+    Returns ``(chosen_slot, probabilities)`` over ALL slots, where excluded
+    slots get probability 0; ``(None, {})`` when there are no events.
     """
     if rng is None:
         rng = np.random.default_rng()
@@ -731,116 +717,99 @@ def _compute_choice_from_inspected_cells(
     if len(trial_events) == 0:
         return None, {}
 
-    # Extract inspected attributes per alternative
-    inspected_attrs_per_alt: dict[str, dict[str, float]] = {}
+    slots = list(alternative_products.keys())
+
+    def _uniform() -> tuple[str, dict[str, float]]:
+        probs = {slot: 1.0 / len(slots) for slot in slots}
+        return str(rng.choice(slots)), probs
+
+    # §0.5 random lapse: uniform among all slots. The lapse DECISION is made
+    # upstream by effective_lapse_prob (which sets trial_strategy=RANDOM); this
+    # is the downstream uniform draw, kept uniform so GAIN never sharpens it.
+    if trial_strategy.primary_strategy == Strategy.RANDOM:
+        return _uniform()
+
+    # Inspected attributes per slot
+    inspected: dict[str, set[str]] = {slot: set() for slot in slots}
     for event in trial_events:
         if event.attribute_id is not None and event.alternative_id is not None:
-            alt = event.alternative_id
-            attr = event.attribute_id
-            if alt not in inspected_attrs_per_alt:
-                inspected_attrs_per_alt[alt] = {}
-            inspected_attrs_per_alt[alt][attr] = True  # Mark as inspected
+            inspected[event.alternative_id].add(event.attribute_id)
 
-    # Compute utility per alternative based on strategy
-    utilities = {}
-    for slot, product in alternative_products.items():
-        inspected_for_slot = inspected_attrs_per_alt.get(slot, {})
+    # §0.3 slot exclusion: only slots with ≥1 inspected attribute are choosable.
+    choosable = [slot for slot in slots if inspected[slot]]
+    if len(choosable) < 2:
+        # Degenerate trial (≤1 alternative inspected): no real comparison →
+        # treat as an effective lapse (uniform over all slots).
+        return _uniform()
 
-        if trial_strategy.primary_strategy == Strategy.LEXICOGRAPHIC:
-            # Choose best on first_attribute among inspected cells
-            first_attr = trial_strategy.first_attribute
-            if first_attr in inspected_for_slot:
-                value = _get_attribute_value(product, first_attr)
-                utilities[slot] = value if value is not None else 0.0
-            else:
-                utilities[slot] = 0.0  # Penalty for unobserved attribute
-        elif trial_strategy.primary_strategy == Strategy.COMPENSATORY:
-            # Weighted sum over inspected attributes
-            utility = 0.0
-            if trial_strategy.attribute_weights:
-                for attr, weight in trial_strategy.attribute_weights.items():
-                    if attr in inspected_for_slot:
-                        value = _get_attribute_value(product, attr)
-                        if value is not None:
-                            utility += weight * value
-                utilities[slot] = utility
-            else:
-                utilities[slot] = 0.0
-        else:
-            # Fallback to random for unknown strategies
-            utilities[slot] = rng.uniform(0, 1)
+    board_attrs = _ATTRIBUTES[:n_attrs]
+    primary = trial_strategy.primary_strategy
+    # Adaptive resolves to compensatory (≤6 attrs) or satisficing (=8 attrs).
+    if primary == Strategy.ADAPTIVE:
+        primary = Strategy.COMPENSATORY if n_attrs <= 6 else Strategy.SATISFICING
 
-    # Add strategy lapse noise
-    lapse_noise = rng.normal(0, trial_strategy.p_strategy_lapse)
-    for slot in utilities:
-        utilities[slot] += lapse_noise
+    utilities: dict[str, float] = {
+        slot: _strategy_utility(
+            primary, alternative_products[slot], inspected[slot], board_attrs,
+            trial_strategy, z, price_sensitivity, brand_loyalty,
+        )
+        for slot in choosable
+    }
 
-    # Softmax with pinned temperature
-    exp_utilities = {k: np.exp(u / temperature) for k, u in utilities.items()}
+    # §0.5 preference softmax over choosable slots; excluded slots get prob 0.
+    # exp() is always > 0, so sum_exp > 0.
+    exp_utilities = {slot: math.exp(GAIN * u / TAU) for slot, u in utilities.items()}
     sum_exp = sum(exp_utilities.values())
+    probs: dict[str, float] = {slot: 0.0 for slot in slots}
+    for slot, value in exp_utilities.items():
+        probs[slot] = value / sum_exp
 
-    if sum_exp == 0:
-        # Fallback: uniform random
-        slots = list(alternative_products.keys())
-        chosen_slot = str(rng.choice(slots))
-        uniform_prob = 1.0 / len(slots)
-        return chosen_slot, {slot: uniform_prob for slot in slots}
-
-    probs = {k: v / sum_exp for k, v in exp_utilities.items()}
-
-    # Sample choice
     chosen_slot = rng.choice(list(probs.keys()), p=list(probs.values()))
     return chosen_slot, probs
 
 
-def _get_attribute_value(product: Product, attr: str) -> float | None:
-    """Get normalized attribute value from a product.
+def _strategy_utility(
+    primary: Strategy,
+    product: Product,
+    inspected: set[str],
+    board_attrs: list[str],
+    strategy: StrategyParams,
+    z: LatentDeviation,
+    price_sensitivity: float,
+    brand_loyalty: float,
+) -> float:
+    """§0.3 utility ū(slot) for one strategy. RANDOM is handled by the caller.
 
-    Maps trace attribute names to Product fields.
-
-    Args:
-        product: Product object
-        attr: Attribute name from trace (e.g., "price", "brand", "quality")
-
-    Returns:
-        Normalized value [0, 1] or None if attribute not available
+    - Lexicographic: g_{first_attribute} if inspected, else fall through to the
+      compensatory rule for that slot.
+    - Compensatory: Σ w_a·g_a / Σ w_a over inspected (weights via §0.3/§0.4).
+    - Satisficing: min over inspected of (g_a − aspiration_a).
+    - Affect heuristic: g_brand, or 0.5 if brand is not inspected.
     """
-    attr_to_field = {
-        "price": "price_normalised",
-        "quality": "quality_normalised",
-        "brand": "brand",  # Will be converted to normalized value
-        "features": "features",  # Will be converted to normalized value
-    }
-
-    if attr not in attr_to_field:
-        return None
-
-    field = attr_to_field[attr]
-    value = getattr(product, field, None)
-
-    if value is None:
-        return None
-
-    if isinstance(value, (int, float)):
-        return float(value)
-
-    if attr == "brand":
-        # Convert brand to normalized value based on quality
-        # Higher quality brands get higher values
-        brand_quality_map = {
-            "Sony": 0.8,
-            "Samsung": 0.75,
-            "Nike": 0.85,
-            "Adidas": 0.8,
-            "Apple": 0.9,
-        }
-        return float(brand_quality_map.get(value, 0.5))
-
-    if attr == "features":
-        # Convert features list to normalized value (count / max_features)
-        return float(len(value)) / 4.0  # Assume max 4 features
-
-    return 0.5  # Default fallback
+    insp = list(inspected)
+    if primary == Strategy.LEXICOGRAPHIC:
+        first_attr = strategy.first_attribute
+        if first_attr and first_attr in inspected:
+            return goodness_of(product, first_attr)
+        return compensatory_utility(
+            product, insp, strategy.attribute_weights, board_attrs,
+            price_sensitivity, brand_loyalty, z.brand_lean,
+        )
+    if primary == Strategy.COMPENSATORY:
+        return compensatory_utility(
+            product, insp, strategy.attribute_weights, board_attrs,
+            price_sensitivity, brand_loyalty, z.brand_lean,
+        )
+    if primary == Strategy.SATISFICING:
+        aspiration = strategy.aspiration_levels or {}
+        return min(goodness_of(product, a) - aspiration.get(a, 0.0) for a in insp)
+    if primary == Strategy.AFFECT_HEURISTIC:
+        if "brand" in inspected:
+            return goodness_of(product, "brand")
+        return 0.5  # brand not inspected → neutral
+    # No other Strategy reaches here: RANDOM is handled upstream and ADAPTIVE is
+    # resolved to COMPENSATORY/SATISFICING before this is called.
+    return 0.5
 
 
 def _load_category_products(
@@ -866,29 +835,6 @@ def _load_category_products(
                 if prod_dict.get("category") == category:
                     category_products.append(Product(**prod_dict))
     return category_products
-
-
-def _load_product_for_slot(
-    slot: str,
-    category: str,
-    products_by_category: dict[str, list[Product]],
-    rng: np.random.Generator,
-) -> Product:
-    """Load random product for slot from cached category products.
-
-    Args:
-        slot: Slot identifier (e.g., "A", "B", "C")
-        category: Product category
-        products_by_category: Cached products by category
-        rng: Random number generator for sampling
-
-    Returns:
-        Random Product from the category
-    """
-    category_products = products_by_category.get(category, [])
-    if not category_products:
-        raise ValueError(f"No products found for category: {category}")
-    return rng.choice(category_products)
 
 
 # ── Main simulation entry point ──────────────────────────────────────────────
@@ -927,6 +873,13 @@ def simulate_session(
                      and choice probabilities.
     """
     rng = np.random.default_rng(config.random_seed)
+
+    # Board composition (which products appear, §0.7) uses an INDEPENDENT stream
+    # so the acquisition sequence — and its calibration — does not depend on how
+    # many products are sampled. ``rng.spawn`` derives an independent child
+    # Generator from the session SeedSequence WITHOUT advancing ``rng``; the
+    # sequence/choice draws are therefore stable regardless of board changes.
+    board_rng = rng.spawn(1)[0]
 
     # Cache products by category for this session (single category per session)
     products_path = "data/synthetic/products.jsonl"
@@ -1055,16 +1008,23 @@ def simulate_session(
         prop_cells = n_total / n_cells if n_cells > 0 else 0.0
         payne_index = _compute_payne_index(trial_events)
 
-        # Load products for this trial (uses cached products by category)
+        # §0.7: sample n_alts products uniformly WITHOUT replacement from the
+        # category catalogue (a board never shows the same product in two slots;
+        # persona preference enters the choice, not the set). Product k maps to
+        # slot chr(65 + k) = _ALTERNATIVES[k].
+        category_products = _products_by_category[category]
+        sampled_idx = board_rng.choice(len(category_products), size=len(alts), replace=False)
         alternative_products = {
-            slot: _load_product_for_slot(slot, category, _products_by_category, rng)
-            for slot in alts
+            slot: category_products[int(idx)] for slot, idx in zip(alts, sampled_idx)
         }
         final_choice, choice_probabilities = _compute_choice_from_inspected_cells(
             trial_events,
             strategy_params,
             alternative_products,
-            temperature=1.0,
+            n_attrs=n_attrs,
+            z=z,
+            price_sensitivity=config.transactions.price_sensitivity,
+            brand_loyalty=config.transactions.brand_loyalty,
             rng=rng,
         )
         confidence: Optional[int] = int(rng.integers(1, 6)) if n_total > 0 else None
@@ -1094,12 +1054,12 @@ def simulate_session(
         alternative_product_ids = {
             slot: product.product_id for slot, product in alternative_products.items()
         }
-        displayed_attributes = {}
-        for slot, product in alternative_products.items():
-            displayed_attributes[slot] = {
-                "price": product.price_normalised,
-                "quality": product.quality_normalised,
-            }
+        # §0.1: display the first n_attrs board attributes with their [0,1]
+        # encodings (price as-is, brand as tier ordinal, rating/5, etc.).
+        displayed_attributes = {
+            slot: encode_board(product, n_attrs)
+            for slot, product in alternative_products.items()
+        }
         choice_set = ChoiceSet(
             choice_set_id=choice_set_id,
             participant_id=participant_id,

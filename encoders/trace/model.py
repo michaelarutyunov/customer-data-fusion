@@ -44,6 +44,10 @@ EVENT_TYPE_EMBED_DIM: int = 4
 # timestamp_norm + dwell_zscore + is_reinspection = 3
 N_CONTINUOUS: int = 3
 
+# §0.1 board width — the product-feature vector dimension for the choice head
+# (bead b8b). Mirrors applications/choice/data.PRODUCT_DIM.
+PRODUCT_FEATURE_DIM: int = 8
+
 
 class _PositionalEncoding(nn.Module):
     """Learned positional encoding for sequences up to *max_len* positions."""
@@ -123,6 +127,12 @@ class TraceEncoder(nn.Module):
 
         # Auxiliary classification head (discarded after training)
         self.classifier = nn.Linear(EMBEDDING_DIM, n_classes)
+
+        # Auxiliary choice-prediction head (bead b8b, discarded after training).
+        # For each (trial, slot): Linear(concat(trial_emb, 8-dim product vector))
+        # -> scalar logit -> P(chosen). Trained jointly so the trial embedding
+        # carries choice-relevant signal into the fused CDT.
+        self.choice_head = nn.Linear(EMBEDDING_DIM + PRODUCT_FEATURE_DIM, 1)
 
         self._init_weights()
 

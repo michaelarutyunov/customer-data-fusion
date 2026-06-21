@@ -596,3 +596,84 @@ The §11 recommendation ("do not proceed", "redesign encoders") is reversed. The
 5. **Re-run the cascade** (note: the richer board changes traces → the trace encoder's attribute embedding likely needs resizing, not just retraining) and **only then** revisit the encoder-objective question, deciding it empirically via the lift gate. *(Bead `c9v`.)*
 
 The "objective mismatch" hypothesis (§6) remains *untested*, not *confirmed* — it cannot be evaluated until the generator produces learnable choices and the lift baselines exist.
+
+## 13. Post-Fix Cascade Results — Epic `3fx` Complete
+
+> Added: 2026-06-19. All six `3fx` beads closed (`7c1`, `hmc`, `5bz`, `16r`, `6ca`, `c9v`). This section records the empirical outcome of the §A7 remediation and resolves the §6 vs §A7 debate.
+
+### 13.1 The data fix worked (§A7 confirmed)
+
+Regenerating with the finished Phase 0 generator (§0.1 8-attribute board, §0.5 `GAIN=8.0`, §0.3 utilities for all six strategies, §0.6 catalogue) raised the **oracle ceiling from 0.648 to 0.876** — well above the 0.80 authoritative gate. Mean P(chosen) rose 0.239 → 0.477. The binding constraint identified in §A3 (the generator silently omitted §0.3/§0.5) was real and is now removed: the choice labels are learnable by construction.
+
+### 13.2 But M1 still fails the lift gate (§6 confirmed)
+
+The full cascade was re-run on the regenerated data (trace encoder auto-resized its attribute vocab 3→8 attrs — data-driven, no architecture change — then fusion → CDT cache → M1). All artifacts fresh. The lift gate (`16r`):
+
+| metric | pre-fix (§12) | post-fix |
+|---|---|---|
+| oracle_AUC (ceiling) | 0.648 | **0.876** |
+| M1_AUC (CDT two-tower) | 0.53 | **0.568** |
+| product_only_AUC | n/a (never built) | 0.565 |
+| persona_onehot_AUC | n/a | 0.500 (chance) |
+| **lift_over_product** | n/a | **+0.0035** (gate ≥ 0.05) ❌ |
+| M1 ≥ 0.85·oracle | n/a | 0.568 vs 0.744 ❌ |
+
+**Verdict: FAIL.** With learnable labels, the CDT still gives essentially zero lift over product features alone, and M1 reaches only ~65% of the oracle ceiling.
+
+### 13.3 Resolution of the §6 vs §A7 debate: both theses hold, sequentially
+
+§A7 and §6 were not alternatives — they were **two layers of the same failure**, peeled in order:
+
+1. **§A7 (data generation)** was the *first* binding constraint: with oracle 0.648, no model could pass, so §6 could not even be tested. Fixing the generator (§13.1) removed it.
+2. **§6 (objective mismatch)** is the *next* binding constraint, now exposed: even with oracle 0.876, the CDT — a *participant-level* embedding trained on *archetype classification* (fusion archetype val_acc ≈0.9) — encodes "which archetype", not the *per-trial inspected cells* that the §0.3 utility actually chooses on. So `(CDT, product)` cannot recover the trial-level choice (`product_only` 0.565 ≈ `M1` 0.568 while the oracle sits at 0.876).
+
+The §11 "do not proceed" recommendation is therefore re-revised: do not abandon M1, *and* the data fix alone is insufficient. The remaining gap is an encoder-objective question, not a data question.
+
+### 13.4 Follow-up
+
+The objective-mismatch hypothesis is now **supported** (it survived the data-fix control). Filed as bead `customer-data-fusion-b8b`: add a **choice-prediction auxiliary objective** to the trace encoder (multi-task: existing strategy-CE + NT-Xent + a per-`(trial, slot)` choice-BCE head, `LAMBDA_CHOICE=0.5` pinned), re-run the cascade, and re-judge via the same lift gate. If that too fails, the CDT-as-participant-summary may be fundamentally unable to encode per-trial inspected-cell detail, and a per-trial choice architecture should be considered instead.
+
+### 13.5 b8b result — the objective fix is insufficient (negative result)
+
+> Added: 2026-06-19. `b8b` closed. The choice-prediction auxiliary objective on the trace encoder did **not** close the lift gap.
+
+Full cascade re-run with the choice-aware trace encoder (choice head `Linear(concat(trial_emb, 8-dim product)) → BCE`, `LAMBDA_CHOICE=0.5`, trained 50 epochs jointly with strategy-CE + NT-Xent; all steps rc=0):
+
+| metric | c9v (no choice aux) | b8b (with choice aux) |
+|---|---|---|
+| M1_AUC | 0.5681 | 0.5597 |
+| oracle_AUC | 0.8758 | 0.8758 |
+| product_only_AUC | 0.5646 | 0.5646 |
+| **lift_over_product** | +0.0035 | **−0.0048** |
+
+Lift is **flat-to-slightly-negative** — within noise of the pre-b8b result. The auxiliary objective moved the downstream M1 lift by essentially nothing.
+
+**Diagnosis.** This rules out the optimistic "Layer-1" reading (retrain the encoder on the right objective and lift appears). The choice head makes each *trial* embedding choice-aware, but that signal dies at the **fusion bottleneck**: fusion pools per-trial embeddings into a single *participant-level* CDT optimised for identity/archetype (NT-Xent + CE), which averages away the per-trial choice structure. A choice-aware trace encoder therefore cannot hand a choice-aware signal to a participant summary that was never asked to preserve it — and M1, which consumes that participant summary, sees no benefit.
+
+**Implication for the project idea.** The binding constraint is now pin-pointed at the **representation**, not the data (§A7, fixed) and not the encoder objective (§6/b8b, ruled out). The static, participant-level CDT — a fingerprint computed once per consumer — appears **fundamentally unable to encode the per-trial inspected-cell detail** that the §0.3 choice actually depends on. Two paths remain, in increasing order of redesign:
+
+1. **Choice loss at the fusion/CDT level** — make the participant summary itself choice-aware (pool trials under a choice objective, not just identity). Cheapest; tests whether a *static* CDT can be made choice-predictive at all.
+2. **Per-trial choice architecture** — abandon the participant-summary-as-choice-predictor framing; predict each choice from *that trial's* trace + products directly (the trace encoder already sees the inspected cells). This is structurally where the choice information lives, but it is a different product than a reusable CDT fingerprint.
+
+Either way, **M1 (choice prediction from a static CDT) is not validated by the current architecture**, and the result should be read as evidence about the *representation's* limits, not as a refutation of the broader CDT programme (whose proven strengths — individual identity, archetype recovery, trait regression — are about stable participant properties, not per-trial behaviour; see §13.3).
+
+### 13.6 Experiment (1) — fusion-level choice loss: also insufficient (conclusive)
+
+> Added: 2026-06-19. Path 1 from §13.5 was run and failed. The three experiments now converge.
+
+A choice head (`Linear(128 + 8, 1)`) and a per-participant choice-BCE loss (`LAMBDA_CHOICE_FUSION=1.0`, applied to the full no-dropout CDT, over each participant's full choice history) were added to the fusion meta-learner, so the **CDT itself** is shaped by a choice objective. Full cascade re-run with choice losses active at both the trace (b8b) and fusion levels. All steps rc=0; the fusion choice loss genuinely trained.
+
+| experiment | choice objective where | M1_AUC | lift_over_product |
+|---|---|---|---|
+| c9v | nowhere | 0.5681 | +0.0035 |
+| b8b | trace encoder | 0.5597 | −0.0048 |
+| **(1)** | **fusion / CDT** | **0.5718** | **+0.0072** |
+
+All three ≈ 0; (1) improved lift by ~0.004 — within noise, far below the 0.05 gate.
+
+**Smoking gun.** The fusion choice head's BCE **plateaued at ≈0.50** — the entropy of the base rate (~20% chosen). From `(participant CDT, product features)`, the model cannot predict the chosen slot better than guessing the base rate. The participant-level CDT carries **essentially zero per-trial choice information**, and no choice objective — at the trace level, the fusion level, or both — can put it there, because *which cells were inspected* is a property of the **trial**, not the **participant**. You cannot train information into a representation that has already averaged it away.
+
+**Convergent conclusion.** The binding constraint is now triangulated and is **not** data (§A7, fixed: oracle 0.876), **not** the encoder objective (b8b, ruled out), and **not** the fusion objective (experiment 1, ruled out). It is **representation granularity**: a static, participant-level summary cannot hold the per-trial inspected-cell structure the §0.3 choice depends on. Choice prediction from a reusable CDT fingerprint is therefore **not achievable with this architecture**; it requires either (2) a per-trial choice model that conditions on the specific trial's trace, or (3) re-pivoting the CDT's headline value to the stable-property tasks it already proves out (identity, archetype, trait regression, and the stateful/counterfactual simulation the vision originally led with). The "objective mismatch" framing of §6/§C7 was a symptom; the root cause is the participant-summary representation.
+
+
+

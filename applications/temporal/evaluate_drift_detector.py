@@ -60,7 +60,9 @@ def evaluate_drift_detector(
     month_estimator_path = Path(month_estimator_path)
 
     # Load data
-    log.info("evaluation.loading_data", features=str(features_path), labels=str(labels_path))
+    log.info(
+        "evaluation.loading_data", features=str(features_path), labels=str(labels_path)
+    )
     features_df = pd.read_parquet(features_path)
 
     labels_list = []
@@ -134,7 +136,9 @@ def evaluate_drift_detector(
 
             # Accuracy and ±1 tolerance
             exact_match = np.mean([p == t for p, t in zip(valid_preds, valid_trues)])
-            within_one = np.mean([abs(p - t) <= 1 for p, t in zip(valid_preds, valid_trues)])
+            within_one = np.mean(
+                [abs(p - t) <= 1 for p, t in zip(valid_preds, valid_trues)]
+            )
             print(f"Exact match: {exact_match:.3f}")
             print(f"Within ±1 month: {within_one:.3f}")
         else:
@@ -150,7 +154,9 @@ def evaluate_drift_detector(
         output_dir.mkdir(parents=True, exist_ok=True)
 
         fig, ax = plt.subplots(figsize=(8, 6))
-        ax.plot(prob_pred, prob_true, marker="o", linewidth=2, label="Calibration curve")
+        ax.plot(
+            prob_pred, prob_true, marker="o", linewidth=2, label="Calibration curve"
+        )
         ax.plot([0, 1], [0, 1], "--", color="gray", label="Perfectly calibrated")
         ax.set_xlabel("Mean predicted probability")
         ax.set_ylabel("True drift rate")

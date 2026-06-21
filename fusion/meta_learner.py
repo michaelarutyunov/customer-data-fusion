@@ -22,6 +22,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+# §0.1 board width — product-feature vector dimension for the auxiliary choice
+# head (experiment: choice loss at the fusion level). Mirrors
+# applications/choice/data.PRODUCT_DIM / encoders/trace/model.PRODUCT_FEATURE_DIM.
+PRODUCT_FEATURE_DIM: int = 8
+
 
 class LateFusionMetaLearner(nn.Module):
     """Late fusion meta-learner for multimodal behavioural embeddings.
@@ -93,9 +98,7 @@ class LateFusionMetaLearner(nn.Module):
 
         # Learnable TEMPORAL MISSING embedding: pads missing monthly observations.
         # Used when participant has < 12 months of transaction/clickstream data.
-        self.temporal_missing_embedding = nn.Parameter(
-            torch.zeros(per_modality_dim)
-        )
+        self.temporal_missing_embedding = nn.Parameter(torch.zeros(per_modality_dim))
         nn.init.normal_(self.temporal_missing_embedding, mean=0.0, std=0.02)
 
         if phase == "1":
@@ -122,6 +125,13 @@ class LateFusionMetaLearner(nn.Module):
             self.classifier = nn.Linear(embed_dim, n_classes)
         else:
             raise ValueError(f"Invalid phase: {phase}. Must be '1' or '2'.")
+
+        # Auxiliary choice-prediction head (experiment: choice loss at the
+        # fusion level). For each (participant, slot): Linear(concat(CDT, 8-dim
+        # product vector)) -> scalar logit -> P(chosen). Trained jointly so the
+        # CDT itself carries choice-relevant signal. Discarded at inference
+        # (only embed() is used downstream).
+        self.choice_head = nn.Linear(embed_dim + PRODUCT_FEATURE_DIM, 1)
 
     def apply_missing_mask(
         self,

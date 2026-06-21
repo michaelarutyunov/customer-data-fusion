@@ -48,6 +48,7 @@ from generator.persona_sampler import (
     sample_persona,
     sample_temporal_trajectory,
 )
+from generator.product_catalog import generate_product_catalog
 from generator.psychographic_generator import generate_psychographic
 from generator.text_generator import generate_narrative
 from generator.trace_simulator import simulate_session
@@ -247,6 +248,11 @@ def run_pipeline(
     counts: dict mapping file stem to number of rows written.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Ensure the category's product catalogue exists (generate-once, §0.6).
+    # Seeded independently of --seed and read by the trace/transaction simulators
+    # from data/synthetic/products.jsonl, so it is ensured at that fixed path.
+    generate_product_catalog(category)
 
     all_archetypes = list_archetype_ids()
     active_archetypes = archetypes if archetypes else all_archetypes

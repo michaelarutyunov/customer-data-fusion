@@ -32,43 +32,43 @@ from schemas.transaction import Channel, PaymentMethod, PurchaseType, Transactio
 logger = structlog.get_logger(__name__)
 
 # ---------------------------------------------------------------------------
-# Product catalog: shared Product schema loaded from data/synthetic/products.jsonl
+# Product catalogue: shared Product schema loaded from data/synthetic/products.jsonl.
+# Indexed lazily by (category, brand_tier) for §0.8 transaction selection.
 # ---------------------------------------------------------------------------
 
-def _load_products_for_category(category: str) -> dict[str, Product]:
-    """Load products for a given category from the shared product catalog."""
-    products = {}
-    products_path = "data/synthetic/products.jsonl"
-    with open(products_path) as f:
-        for line in f:
-            product = json.loads(line)
-            if product["category"] == category:
-                products[product["product_id"]] = Product(**product)
-    return products
+_PRODUCTS_PATH = "data/synthetic/products.jsonl"
+
+# Module-level cache keyed by (category, brand_tier) -> list[Product].
+_PRODUCTS_BY_CATEGORY_TIER: dict[tuple[str, str], list[Product]] = {}
 
 
-# Load electronics products at module init (lazy load in _choose_sku if needed)
-_ELECTRONICS_PRODUCTS = _load_products_for_category("electronics")
+def _load_catalogue_index() -> dict[tuple[str, str], list[Product]]:
+    """Load products.jsonl into a ``(category, brand_tier)`` index (lazy, cached).
 
-# Convert to numpy arrays for fast logit calculations
-_PRODUCT_IDS = np.array(list(_ELECTRONICS_PRODUCTS.keys()))
-_PRICES_NORMALISED = np.array(
-    [p.price_normalised for p in _ELECTRONICS_PRODUCTS.values()], dtype=float
-)
-_QUALITIES_NORMALISED = np.array(
-    [p.quality_normalised for p in _ELECTRONICS_PRODUCTS.values()], dtype=float
-)
+    Lazy so importing this module never requires the catalogue to exist on disk
+    — only generating transactions does. Tolerates a missing file (returns an
+    empty index) so callers can raise a clear, actionable error if a tier pool
+    is empty.
+    """
+    if _PRODUCTS_BY_CATEGORY_TIER:
+        return _PRODUCTS_BY_CATEGORY_TIER
+    try:
+        with open(_PRODUCTS_PATH) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                product = Product(**json.loads(line))
+                key = (product.category, product.brand_tier)
+                _PRODUCTS_BY_CATEGORY_TIER.setdefault(key, []).append(product)
+    except FileNotFoundError:
+        logger.warning("products_catalogue_missing", path=_PRODUCTS_PATH)
+    return _PRODUCTS_BY_CATEGORY_TIER
 
-# Map quality tiers (0.0 → value/budget, 0.5 → mid, 1.0 → premium)
-_QUALITY_TIERS = np.zeros_like(_QUALITIES_NORMALISED)
-_QUALITY_TIERS[_QUALITIES_NORMALISED == 0.0] = 0  # budget
-_QUALITY_TIERS[_QUALITIES_NORMALISED == 0.5] = 1  # mid
-_QUALITY_TIERS[_QUALITIES_NORMALISED == 1.0] = 2  # premium
 
-# Base prices for unit_price calculation (map from normalized to dollar range)
-_BASE_PRICE_MIN = 29.99  # budget electronics
-_BASE_PRICE_MAX = 199.99  # premium electronics
-_BASE_PRICES = _BASE_PRICE_MIN + _PRICES_NORMALISED * (_BASE_PRICE_MAX - _BASE_PRICE_MIN)
+# Base prices for unit_price calculation (map normalized price to a dollar range).
+_BASE_PRICE_MIN = 29.99  # cheapest catalogue products
+_BASE_PRICE_MAX = 199.99  # most expensive catalogue products
 
 # ---------------------------------------------------------------------------
 # Brand tiers (legacy compatibility — still used for brand_tier field)
@@ -236,70 +236,43 @@ def _generate_purchase_occasions(
     return days_before
 
 
-def _choose_sku(
+def _choose_catalogue_product(
     rng: np.random.Generator,
     category: str,
-    price_sensitivity: float,
-    brand_loyalty: float,
-) -> tuple[str, str, float]:
+    brand_tier: str,
+) -> tuple[str, float]:
+    """§0.8: resolve a transaction to a catalogue product of ``brand_tier``.
+
+    Sample uniformly WITH replacement among catalogue products of ``brand_tier``
+    in ``category``. With-replacement is required — a consumer repurchases over
+    a transaction history, so without-replacement would exhaust a small
+    (3-product) tier after three purchases. The tier was already sampled upstream
+    by ``_sample_brand_tier`` (which already accounts for ``brand_loyalty``);
+    this step only resolves it to a concrete catalogue product.
+
+    Returns ``(product_id, base_price)``.
     """
-    Choose a product via conditional logit model.
-
-    Utility = beta_price * log(unit_price) + beta_brand * tier_indicator + epsilon
-
-    beta_price is negative (from price_sensitivity), beta_brand is positive (from brand_loyalty).
-    Returns (product_id, tier, base_price).
-    """
-    # Load products for the requested category (electronics for now)
-    if category == "electronics":
-        product_ids = _PRODUCT_IDS
-        base_prices = _BASE_PRICES
-        tier_indicators = _QUALITY_TIERS
-    else:
-        # Fallback for other categories: load on-demand
-        products = _load_products_for_category(category)
-        if not products:
-            # Emergency fallback: use electronics catalog
-            logger.warning(
-                "no_products_for_category",
-                category=category,
-                fallback="electronics",
-            )
-            product_ids = _PRODUCT_IDS
-            base_prices = _BASE_PRICES
-            tier_indicators = _QUALITY_TIERS
-        else:
-            product_ids = np.array(list(products.keys()))
-            prices_norm = np.array([p.price_normalised for p in products.values()])
-            qualities_norm = np.array([p.quality_normalised for p in products.values()])
-            base_prices = _BASE_PRICE_MIN + prices_norm * (_BASE_PRICE_MAX - _BASE_PRICE_MIN)
-            tier_indicators = np.zeros_like(qualities_norm)
-            tier_indicators[qualities_norm == 0.0] = 0
-            tier_indicators[qualities_norm == 0.5] = 1
-            tier_indicators[qualities_norm == 1.0] = 2
-
-    # Conditional logit coefficients
-    beta_price = -(
-        0.5 + price_sensitivity * 2.0
-    )  # negative: higher price → lower utility
-    beta_brand = (
-        brand_loyalty * 1.5
-    )  # positive: premium tier preferred by loyal customers
-
-    # Deterministic utility
-    log_prices = np.log(base_prices)
-    utility = beta_price * log_prices + beta_brand * tier_indicators
-
-    # Add Gumbel noise (epsilon) → softmax choice probabilities
-    noise = rng.gumbel(0, 1, size=len(product_ids))
-    perturbed_utility = utility + noise
-
-    chosen_idx = int(np.argmax(perturbed_utility))
-    product_id = product_ids[chosen_idx]
-    tier = ["budget", "mid", "premium"][int(tier_indicators[chosen_idx])]
-    base_price = base_prices[chosen_idx]
-
-    return product_id, tier, base_price
+    index = _load_catalogue_index()
+    pool = index.get((category, brand_tier))
+    if not pool:
+        # Fallbacks: any product of this tier (any category), then electronics.
+        pool = [
+            p for (cat, tier), ps in index.items() if tier == brand_tier for p in ps
+        ]
+    if not pool:
+        pool = index.get(("electronics", brand_tier), [])
+    if not pool:
+        pool = [p for ps in index.values() for p in ps]
+    if not pool:
+        raise ValueError(
+            "Empty product catalogue index — run `python -m generator.product_catalog` "
+            f"before generating transactions (needed tier={brand_tier!r})."
+        )
+    product = pool[int(rng.integers(len(pool)))]
+    base_price = _BASE_PRICE_MIN + product.price_normalised * (
+        _BASE_PRICE_MAX - _BASE_PRICE_MIN
+    )
+    return product.product_id, float(base_price)
 
 
 def simulate_transactions(
@@ -373,9 +346,9 @@ def simulate_transactions(
         brand_tier = _sample_brand_tier(rng, params.brand_loyalty)
         purchase_type = _sample_purchase_type(rng, params.brand_loyalty, on_promo)
 
-        # --- Phase 2c: Product choice via conditional logit ---
-        chosen_product_id, sku_tier, base_price = _choose_sku(
-            rng, category, params.price_sensitivity, params.brand_loyalty
+        # --- §0.8: product resolves to a catalogue product of the sampled tier ---
+        chosen_product_id, base_price = _choose_catalogue_product(
+            rng, category, brand_tier
         )
         unit_price = round(price_pct * base_price, 2)
 

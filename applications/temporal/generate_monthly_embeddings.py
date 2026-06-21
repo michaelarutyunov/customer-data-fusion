@@ -21,8 +21,7 @@ import torch
 from tqdm import tqdm
 
 from fusion.meta_learner import LateFusionMetaLearner
-from schemas import CHECKPOINT_PATHS, EMBEDDING_DIM
-from schemas.transaction import Channel, PurchaseType
+from schemas import EMBEDDING_DIM
 
 log = structlog.get_logger(__name__)
 
@@ -129,7 +128,6 @@ def _encode_month(
     pid_to_idx = {pid: i for i, pid in enumerate(participant_ids)}
 
     # Prepare per-modality data structures for encoding
-    from collections import defaultdict
     from schemas.trace import AcquisitionEvent, TrialRecord
     from schemas.transaction import TransactionRecord
     from schemas.psychographic import PsychographicVector
@@ -151,11 +149,23 @@ def _encode_month(
             if pid in pid_to_idx:
                 if rec.get("record_type") == "event":
                     events_by_pid[pid].append(
-                        AcquisitionEvent(**{k: v for k, v in rec.items() if k in AcquisitionEvent.__dataclass_fields__})
+                        AcquisitionEvent(
+                            **{
+                                k: v
+                                for k, v in rec.items()
+                                if k in AcquisitionEvent.__dataclass_fields__
+                            }
+                        )
                     )
                 elif rec.get("record_type") == "trial":
                     trials_by_pid[pid].append(
-                        TrialRecord(**{k: v for k, v in rec.items() if k in TrialRecord.__dataclass_fields__})
+                        TrialRecord(
+                            **{
+                                k: v
+                                for k, v in rec.items()
+                                if k in TrialRecord.__dataclass_fields__
+                            }
+                        )
                     )
 
     # Process transactions
@@ -167,7 +177,9 @@ def _encode_month(
 
     # Process clickstream
     if "clickstream" in all_records:
-        raw_by_pid_sid: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
+        raw_by_pid_sid: dict[str, dict[str, list]] = defaultdict(
+            lambda: defaultdict(list)
+        )
         for rec in all_records["clickstream"]:
             pid = rec.get("participant_id", "")
             customer_id = rec.get("customer_id", "")
@@ -177,8 +189,14 @@ def _encode_month(
                 continue
             if pid in pid_to_idx:
                 # Filter to known dataclass fields to prevent injection
-                filtered_fields = {k: v for k, v in rec.items() if k in ClickstreamEvent.__dataclass_fields__}
-                raw_by_pid_sid[pid][rec.get("session_id", "")].append(ClickstreamEvent(**filtered_fields))
+                filtered_fields = {
+                    k: v
+                    for k, v in rec.items()
+                    if k in ClickstreamEvent.__dataclass_fields__
+                }
+                raw_by_pid_sid[pid][rec.get("session_id", "")].append(
+                    ClickstreamEvent(**filtered_fields)
+                )
         for pid, sessions in raw_by_pid_sid.items():
             click_sessions_by_pid[pid] = [
                 sorted(s, key=lambda e: e.event_ts) for s in sessions.values()
@@ -190,7 +208,11 @@ def _encode_month(
             pid = rec.get("participant_id", "")
             if pid in pid_to_idx:
                 # Filter to known dataclass fields to prevent injection
-                filtered_fields = {k: v for k, v in rec.items() if k in CampaignEvent.__dataclass_fields__}
+                filtered_fields = {
+                    k: v
+                    for k, v in rec.items()
+                    if k in CampaignEvent.__dataclass_fields__
+                }
                 campaign_events_by_pid[pid].append(CampaignEvent(**filtered_fields))
         for pid in campaign_events_by_pid:
             campaign_events_by_pid[pid].sort(key=lambda e: e.sent_ts)
@@ -206,6 +228,7 @@ def _encode_month(
     trace_vocab = None
     if events_by_pid or trials_by_pid:
         from encoders.trace.tokeniser import build_vocab
+
         all_events = [ev for evs in events_by_pid.values() for ev in evs]
         if all_events:
             trace_vocab = build_vocab(all_events)
@@ -219,10 +242,15 @@ def _encode_month(
             if "trace" in fusion_model.available_modalities and trace_vocab is not None:
                 trial_embs = []
                 for trial in trials_by_pid.get(participant_id, []):
-                    tid_events = [e for e in events_by_pid.get(participant_id, []) if e.trial_id == trial.trial_id]
+                    tid_events = [
+                        e
+                        for e in events_by_pid.get(participant_id, [])
+                        if e.trial_id == trial.trial_id
+                    ]
                     if not tid_events:
                         continue
                     from encoders.trace.tokeniser import tokenise_trial
+
                     tokens, mask = tokenise_trial(tid_events, trial, trace_vocab)
                     tokens_b = tokens.unsqueeze(0).to(device)
                     mask_b = mask.unsqueeze(0).to(device) if mask is not None else None
@@ -232,7 +260,9 @@ def _encode_month(
                     trace_emb = torch.stack(trial_embs).mean(0)
                     modality_embeddings.append(trace_emb)
                 else:
-                    modality_embeddings.append(torch.zeros(EMBEDDING_DIM, device=device))
+                    modality_embeddings.append(
+                        torch.zeros(EMBEDDING_DIM, device=device)
+                    )
             else:
                 modality_embeddings.append(torch.zeros(EMBEDDING_DIM, device=device))
 
@@ -240,7 +270,9 @@ def _encode_month(
             if "transaction" in fusion_model.available_modalities:
                 raw_txs = tx_by_pid.get(participant_id, [])
                 if raw_txs:
-                    from encoders.transaction.features import sort_transactions_most_recent_first
+                    from encoders.transaction.features import (
+                        sort_transactions_most_recent_first,
+                    )
                     from schemas.transaction import Channel, PurchaseType
 
                     tx_records = []
@@ -269,7 +301,9 @@ def _encode_month(
                     tx_emb = tx_enc(token_seq_b, lengths).squeeze(0)
                     modality_embeddings.append(tx_emb)
                 else:
-                    modality_embeddings.append(torch.zeros(EMBEDDING_DIM, device=device))
+                    modality_embeddings.append(
+                        torch.zeros(EMBEDDING_DIM, device=device)
+                    )
             else:
                 modality_embeddings.append(torch.zeros(EMBEDDING_DIM, device=device))
 
@@ -279,11 +313,14 @@ def _encode_month(
                 narrative = psycho.get("narrative", "")
                 if narrative:
                     from encoders.text.embed import TextEncoder
+
                     text_encoder = TextEncoder(device)
                     text_emb = text_encoder.encode_text(narrative)
                     modality_embeddings.append(text_emb)
                 else:
-                    modality_embeddings.append(torch.zeros(EMBEDDING_DIM, device=device))
+                    modality_embeddings.append(
+                        torch.zeros(EMBEDDING_DIM, device=device)
+                    )
             else:
                 modality_embeddings.append(torch.zeros(EMBEDDING_DIM, device=device))
 
@@ -292,13 +329,24 @@ def _encode_month(
                 psycho = psychographic_by_pid.get(participant_id, {})
                 if psycho:
                     from encoders.psychographic.features import to_feature_vector
+
                     # Filter to known dataclass fields to prevent injection
-                    filtered_psycho = {k: v for k, v in psycho.items() if k in PsychographicVector.__dataclass_fields__}
-                    psych_vector = to_feature_vector(PsychographicVector(**filtered_psycho))
-                    psych_emb = fusion_model.modality_encoders["psychographic"](psych_vector)
+                    filtered_psycho = {
+                        k: v
+                        for k, v in psycho.items()
+                        if k in PsychographicVector.__dataclass_fields__
+                    }
+                    psych_vector = to_feature_vector(
+                        PsychographicVector(**filtered_psycho)
+                    )
+                    psych_emb = fusion_model.modality_encoders["psychographic"](
+                        psych_vector
+                    )
                     modality_embeddings.append(psych_emb)
                 else:
-                    modality_embeddings.append(torch.zeros(EMBEDDING_DIM, device=device))
+                    modality_embeddings.append(
+                        torch.zeros(EMBEDDING_DIM, device=device)
+                    )
             else:
                 modality_embeddings.append(torch.zeros(EMBEDDING_DIM, device=device))
 
@@ -306,14 +354,21 @@ def _encode_month(
             if "clickstream" in fusion_model.available_modalities:
                 sessions = click_sessions_by_pid.get(participant_id, [])
                 if sessions:
-                    from encoders.clickstream.features import MAX_EVENTS_PER_SESSION, MAX_SESSIONS
+                    from encoders.clickstream.features import (
+                        MAX_EVENTS_PER_SESSION,
+                        MAX_SESSIONS,
+                    )
 
                     click_enc = fusion_model.modality_encoders["clickstream"]
-                    sessions_sorted = sorted(sessions, key=lambda s: s[0].event_ts if s else "")
+                    sessions_sorted = sorted(
+                        sessions, key=lambda s: s[0].event_ts if s else ""
+                    )
                     sessions_sorted = sessions_sorted[-MAX_SESSIONS:]
                     session_embeddings = []
                     for sess in sessions_sorted:
-                        tokens = click_enc.vocab.encode_session(sess)[:MAX_EVENTS_PER_SESSION]
+                        tokens = click_enc.vocab.encode_session(sess)[
+                            :MAX_EVENTS_PER_SESSION
+                        ]
                         if tokens.size(0) > 0:
                             tokens_b = tokens.unsqueeze(0).to(device)
                             sess_emb = click_enc(tokens_b).squeeze(0)
@@ -322,9 +377,13 @@ def _encode_month(
                         click_emb = torch.stack(session_embeddings).mean(0)
                         modality_embeddings.append(click_emb)
                     else:
-                        modality_embeddings.append(torch.zeros(EMBEDDING_DIM, device=device))
+                        modality_embeddings.append(
+                            torch.zeros(EMBEDDING_DIM, device=device)
+                        )
                 else:
-                    modality_embeddings.append(torch.zeros(EMBEDDING_DIM, device=device))
+                    modality_embeddings.append(
+                        torch.zeros(EMBEDDING_DIM, device=device)
+                    )
             else:
                 modality_embeddings.append(torch.zeros(EMBEDDING_DIM, device=device))
 
@@ -338,13 +397,20 @@ def _encode_month(
                     raw = camp_enc.vocab.encode_sequence(events).to(device)
                     seq_len = raw.size(0)
                     if raw.size(1) < TOKEN_DIM:
-                        pad = torch.zeros(seq_len, TOKEN_DIM - raw.size(1), dtype=raw.dtype, device=device)
+                        pad = torch.zeros(
+                            seq_len,
+                            TOKEN_DIM - raw.size(1),
+                            dtype=raw.dtype,
+                            device=device,
+                        )
                         raw = torch.cat([raw, pad], dim=1)
                     raw_b = raw.unsqueeze(0)
                     camp_emb = camp_enc(raw_b).squeeze(0)
                     modality_embeddings.append(camp_emb)
                 else:
-                    modality_embeddings.append(torch.zeros(EMBEDDING_DIM, device=device))
+                    modality_embeddings.append(
+                        torch.zeros(EMBEDDING_DIM, device=device)
+                    )
             else:
                 modality_embeddings.append(torch.zeros(EMBEDDING_DIM, device=device))
 
@@ -425,6 +491,7 @@ def generate_monthly_embeddings(
 
     # Load modality encoders
     from fusion.train import load_encoders
+
     modality_encoders = load_encoders(device=device)
 
     # Load fusion model

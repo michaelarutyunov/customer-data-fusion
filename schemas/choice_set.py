@@ -18,6 +18,8 @@ class ChoiceSet:
     participant_id: str
     n_alternatives: int  # 3, 5, or 7
     alternative_products: Dict[str, str]  # {"A": "prod_xxx", "B": "prod_yyy"}
-    displayed_attributes: Dict[str, Dict[str, float]]  # {"A": {"price": 0.8, "quality": 0.6}}
+    displayed_attributes: Dict[
+        str, Dict[str, float]
+    ]  # {"A": {"price": 0.8, "quality": 0.6}}
     chosen_alternative: str  # "A", "B", "C", etc.
     choice_probabilities: Dict[str, float]  # {"A": 0.2, "B": 0.7, ...}

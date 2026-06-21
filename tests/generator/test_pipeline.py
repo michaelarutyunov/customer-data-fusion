@@ -116,6 +116,7 @@ class TestRunPipeline:
             "participant_configs",
             "clickstream",
             "campaigns",
+            "choice_sets",
         }
 
 

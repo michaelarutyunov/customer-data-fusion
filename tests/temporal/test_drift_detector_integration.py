@@ -16,7 +16,9 @@ def test_full_pipeline_end_to_end(tmp_path, fusion_model_exists):
 
     It will be skipped in CI if dependencies are missing.
     """
-    from applications.temporal.generate_monthly_embeddings import generate_monthly_embeddings
+    from applications.temporal.generate_monthly_embeddings import (
+        generate_monthly_embeddings,
+    )
     from applications.temporal.extract_features import extract_features
     from applications.temporal.train_drift_detector import train_drift_detector
 

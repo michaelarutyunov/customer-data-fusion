@@ -18,10 +18,8 @@ from pathlib import Path
 
 import numpy as np
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score
 
-from encoders.trace.load import load_encoder
-from schemas.trace import AcquisitionEvent, TrialRecord
+from schemas.trace import TrialRecord
 from schemas.choice_set import ChoiceSet
 
 
@@ -38,11 +36,15 @@ def load_trial_data(
     with open(trials_path) as f:
         for line in f:
             trial_dict = json.loads(line)
+            # Remove month field if present (injected by pipeline, not in schema)
+            trial_dict.pop("month", None)
             trials.append(TrialRecord(**trial_dict))
 
     with open(choice_sets_path) as f:
         for line in f:
             choice_set_dict = json.loads(line)
+            # Remove month field if present (injected by pipeline, not in schema)
+            choice_set_dict.pop("month", None)
             choice_sets.append(ChoiceSet(**choice_set_dict))
 
     return trials, choice_sets
@@ -68,12 +70,9 @@ def verify_trace_choice_coupling(
     # Build choice_set lookup
     choice_set_map = {cs.choice_set_id: cs for cs in choice_sets}
 
-    # Load trace encoder
-    print(f"Loading trace encoder from {encoder_path}")
-    encoder = load_encoder(str(encoder_path), device=device)
-
-    # Build dataset
-    X = []  # Trace embeddings (will be extracted per trial)
+    # Build dataset using trial metadata as proxy for trace features
+    # Note: Full implementation would load actual trace encoder and encode acquisition events
+    X = []  # Trial features (proxy for trace embeddings)
     y = []  # Chosen slots (converted to int)
 
     n_alternatives_counts = []
@@ -86,14 +85,8 @@ def verify_trace_choice_coupling(
         if choice_set is None:
             continue  # Skip trials with missing choice sets
 
-        # Extract trace events for this trial
-        # Note: In practice, you'd need to load trace events from traces.jsonl
-        # For this verification, we'll use a simplified approach
-
-        # For now, use a proxy: trial features that the trace encoder would use
-        # In a full implementation, you'd encode the actual acquisition sequence
-
-        # Simple proxy features based on trial metadata
+        # Use trial metadata as proxy features for trace encoder output
+        # Full implementation would encode the actual acquisition sequence
         trial_features = np.array([
             trial.n_alternatives / 7.0,  # Normalized
             trial.n_attributes / 8.0,  # Normalized
@@ -121,8 +114,16 @@ def verify_trace_choice_coupling(
 
     print(f"Built dataset: {len(X)} trial-choice pairs")
 
+    if len(X) == 0:
+        print("❌ ERROR: No trial-choice pairs found with choice_set_id linkage")
+        print("   This may be because:")
+        print("   1. Dataset was generated before Task #9 (ChoiceSet generation)")
+        print("   2. Trace coverage subset doesn't have choice linkage yet")
+        print("   Solution: Regenerate dataset or check trace_coverage parameter")
+        return 0.0
+
     # Train logistic regression
-    print("Training logistic regression on trace features...")
+    print("Training logistic regression on trial features (trace proxy)...")
     clf = LogisticRegression(max_iter=1000, random_state=42)
     clf.fit(X, y)
 
@@ -137,20 +138,22 @@ def verify_trace_choice_coupling(
     target = 1.5 * chance_baseline
 
     print(f"\n{'='*60}")
-    print(f"Trace-Choice Coupling Verification")
+    print(f"Trace-Choice Coupling Verification (Proxy)")
     print(f"{'='*60}")
     print(f"Accuracy:           {accuracy:.3f}")
     print(f"Chance baseline:    {chance_baseline:.3f} (1/{mean_n_alternatives:.1f})")
     print(f"Target (1.5×):     {target:.3f}")
     print(f"{'='*60}")
+    print(f"⚠️  NOTE: Using trial metadata as proxy for trace encoder features")
+    print(f"      Full implementation would encode acquisition events with trained encoder")
 
     if accuracy < target:
-        print(f"⚠️  TRACE-CHOICE COUPLING WEAK: {accuracy:.3f} < {target:.3f} (1.5× chance)")
+        print(f"\n⚠️  TRACE-CHOICE COUPLING WEAK: {accuracy:.3f} < {target:.3f} (1.5× chance)")
         print("M1's CDT lift gate may be unpassable.")
         print("Consider tuning inspection_bonus coefficient in choice utility.")
     else:
-        print(f"✅ TRACE-CHOICE COUPLING STRONG: {accuracy:.3f} ≥ {target:.3f} (1.5× chance)")
-        print("Trace embeddings predict choices. M1 should be able to learn CDT lift.")
+        print(f"\n✅ TRACE-CHOICE COUPLING STRONG: {accuracy:.3f} ≥ {target:.3f} (1.5× chance)")
+        print("Trial features predict choices. M1 should be able to learn CDT lift.")
 
     return accuracy
 

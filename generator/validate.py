@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 
 import structlog
 
+from generator.choice_model import BOARD_ATTRIBUTES
 from schemas.persona import PersonaConfig
 from schemas.psychographic import PsychographicVector
 from schemas.text import PersonaNarrative
@@ -248,7 +249,9 @@ def _check_choice_consistency(
         if choice_set is None:
             msg = f"Trial {trial.trial_id}: choice_set_id={trial.choice_set_id} not found in choice_sets"
             report.fail("choice_consistency", msg)
-            bound_log.warning("validation_failed", check="choice_consistency", trial_id=trial.trial_id)
+            bound_log.warning(
+                "validation_failed", check="choice_consistency", trial_id=trial.trial_id
+            )
             continue
 
         if choice_set.chosen_alternative != trial.final_choice:
@@ -275,33 +278,28 @@ def _check_product_coverage(
     Verify all ChoiceSet records have valid product attributes.
 
     Checks:
-    - displayed_attributes contains price and quality for all alternatives
+    - every displayed attribute is a valid §0.1 board attribute
     - choice_probabilities sum to ~1.0 (within 0.1 tolerance)
     - alternative_products mapping is complete
     """
+    board = set(BOARD_ATTRIBUTES)
     for choice_set in choice_sets:
-        # Check displayed_attributes completeness
+        # Check displayed_attributes are valid board attributes
         for slot, attrs in choice_set.displayed_attributes.items():
-            if "price" not in attrs:
-                msg = f"ChoiceSet {choice_set.choice_set_id}: slot {slot} missing 'price' attribute"
-                report.fail("product_coverage", msg)
-                bound_log.warning(
-                    "validation_failed",
-                    check="product_coverage",
-                    choice_set_id=choice_set.choice_set_id,
-                    missing_attribute="price",
-                    slot=slot,
-                )
-            if "quality" not in attrs:
-                msg = f"ChoiceSet {choice_set.choice_set_id}: slot {slot} missing 'quality' attribute"
-                report.fail("product_coverage", msg)
-                bound_log.warning(
-                    "validation_failed",
-                    check="product_coverage",
-                    choice_set_id=choice_set.choice_set_id,
-                    missing_attribute="quality",
-                    slot=slot,
-                )
+            for attr in attrs:
+                if attr not in board:
+                    msg = (
+                        f"ChoiceSet {choice_set.choice_set_id}: slot {slot} "
+                        f"has non-board attribute {attr!r}"
+                    )
+                    report.fail("product_coverage", msg)
+                    bound_log.warning(
+                        "validation_failed",
+                        check="product_coverage",
+                        choice_set_id=choice_set.choice_set_id,
+                        invalid_attribute=attr,
+                        slot=slot,
+                    )
 
         # Check probability normalization
         prob_sum = sum(choice_set.choice_probabilities.values())
@@ -350,9 +348,6 @@ def _check_trace_choice_coupling(
     - All choice_sets are referenced by exactly one trial
     - choice_set_id format matches trial_id format (linkage integrity)
     """
-    # Build choice_set lookup
-    choice_set_map = {cs.choice_set_id: cs for cs in choice_sets}
-
     # Check 1: All trials with choices should have choice_set_id
     trials_with_choice = [t for t in trial_records if t.final_choice is not None]
     trials_without_link = [t for t in trials_with_choice if t.choice_set_id is None]
@@ -367,7 +362,9 @@ def _check_trace_choice_coupling(
         )
 
     # Check 2: All choice_sets should be referenced by a trial
-    referenced_choice_set_ids = {t.choice_set_id for t in trial_records if t.choice_set_id is not None}
+    referenced_choice_set_ids = {
+        t.choice_set_id for t in trial_records if t.choice_set_id is not None
+    }
     unreferenced_choice_sets = [
         cs for cs in choice_sets if cs.choice_set_id not in referenced_choice_set_ids
     ]

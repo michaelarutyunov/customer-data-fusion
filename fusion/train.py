@@ -672,6 +672,80 @@ def _apply_modality_dropout(
     return result
 
 
+# ---------------------------------------------------------------------------
+# Auxiliary choice-prediction loss at the fusion level
+# (experiment: shape the CDT itself with a choice objective)
+# ---------------------------------------------------------------------------
+
+# Pinned weight for the auxiliary choice-BCE loss (declared, not tuned).
+LAMBDA_CHOICE_FUSION: float = 1.0
+
+_BRAND_TIER_LEVEL_FUSION: dict[str, float] = {
+    "premium": 1.0,
+    "mid": 0.66,
+    "value": 0.33,
+    "own_label": 0.0,
+}
+
+
+def _product_features_fusion(product: dict) -> torch.Tensor:
+    """§0.1 board encoding of a catalogue product → 8-dim float tensor."""
+    return torch.tensor(
+        [
+            float(product["price_normalised"]),
+            _BRAND_TIER_LEVEL_FUSION[product["brand_tier"]],
+            float(product["quality_score"]),
+            float(product["warranty_score"]),
+            float(product["rating"]) / 5.0,
+            float(product["features_score"]),
+            1.0 if product["availability"] else 0.0,
+            float(product["design_score"]),
+        ],
+        dtype=torch.float,
+    )
+
+
+def build_participant_choice(
+    choice_sets_path: Path = Path("data/synthetic/choice_sets.jsonl"),
+    products_path: Path = Path("data/synthetic/products.jsonl"),
+) -> dict[str, tuple[torch.Tensor, torch.Tensor]]:
+    """Group every participant's choice rows: pid -> (feats [N,8], chosen [N]).
+
+    Aggregates all of a participant's trials' slots, so the fusion-level choice
+    head sees a participant's full choice history when shaping the CDT.
+    """
+    products: dict[str, dict] = {}
+    with open(products_path) as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                p = json.loads(line)
+                products[p["product_id"]] = p
+
+    by_pid: dict[str, tuple[list[torch.Tensor], list[float]]] = {}
+    with open(choice_sets_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            cs = json.loads(line)
+            pid = cs["participant_id"]
+            chosen = cs.get("chosen_alternative")
+            feats_list, labels_list = by_pid.setdefault(pid, ([], []))
+            for slot, product_id in cs.get("alternative_products", {}).items():
+                product = products.get(product_id)
+                if product is None:
+                    continue
+                feats_list.append(_product_features_fusion(product))
+                labels_list.append(1.0 if slot == chosen else 0.0)
+
+    out: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
+    for pid, (feats_list, labels_list) in by_pid.items():
+        if feats_list:
+            out[pid] = (torch.stack(feats_list), torch.tensor(labels_list, dtype=torch.float))
+    return out
+
+
 def train(
     *,
     modalities: list[str] | None = None,
@@ -754,7 +828,9 @@ def train(
             raise FileNotFoundError(f"Temporal data not found: {temporal_path}")
 
         print(f"Loading temporal embeddings from {temporal_path}...")
-        temporal_cache = torch.load(temporal_path, map_location=device, weights_only=True)
+        temporal_cache = torch.load(
+            temporal_path, map_location=device, weights_only=True
+        )
         monthly_embeddings = temporal_cache["monthly_embeddings"]  # [N, 12, 128]
         temporal_participant_ids = temporal_cache["participant_ids"]  # type: ignore[assignment]
         print(f"Temporal embeddings loaded: shape {monthly_embeddings.shape}")
@@ -820,6 +896,17 @@ def train(
         optimizer, mode="max", factor=0.5, patience=5
     )
 
+    # Auxiliary choice data (experiment: choice loss at the fusion level).
+    try:
+        participant_choice = build_participant_choice()
+        print(
+            f"Loaded choice rows for {len(participant_choice)} participants "
+            f"(fusion choice loss, lambda={LAMBDA_CHOICE_FUSION})"
+        )
+    except FileNotFoundError:
+        participant_choice = {}
+        print("choice_sets.jsonl not found — fusion choice loss disabled")
+
     best_val_acc = 0.0
     patience_counter = 0
     max_patience = 10
@@ -829,6 +916,7 @@ def train(
         epoch_ce = 0.0
         epoch_nt = 0.0
         epoch_temp = 0.0
+        epoch_choice = 0.0
         n_batches = 0
 
         for batch_embs, batch_labels, batch_indices in train_loader:
@@ -862,8 +950,12 @@ def train(
 
                 # Find positions of batch participants in temporal data
                 # temporal_participant_ids is from the cache (same order as monthly_embeddings)
-                temporal_pid_to_idx = {pid: i for i, pid in enumerate(temporal_participant_ids)}
-                batch_temporal_indices = [temporal_pid_to_idx[pid] for pid in batch_pids]
+                temporal_pid_to_idx = {
+                    pid: i for i, pid in enumerate(temporal_participant_ids)
+                }
+                batch_temporal_indices = [
+                    temporal_pid_to_idx[pid] for pid in batch_pids
+                ]
 
                 # Extract monthly embeddings for this batch: [batch_size, 12, 128]
                 batch_monthly_embeddings = monthly_embeddings[batch_temporal_indices]
@@ -874,7 +966,46 @@ def train(
                     temperature=nt_xent_temperature,
                 )
 
-            loss = ce_loss + lambda_contrastive * nt_loss + temporal_weight * temp_loss
+            # Auxiliary choice loss on the FULL (no-dropout) CDT (experiment:
+            # shape the participant CDT with a choice objective so it carries
+            # choice-relevant signal into M1).
+            choice_loss = torch.tensor(0.0, device=device)
+            if participant_choice:
+                batch_pids = [participant_ids[idx.item()] for idx in batch_indices]
+                feats_list, labels_list, pididx_list = [], [], []
+                for bi, pid in enumerate(batch_pids):
+                    pc = participant_choice.get(pid)
+                    if pc is None:
+                        continue
+                    pfeats, plabels = pc
+                    feats_list.append(pfeats)
+                    labels_list.append(plabels)
+                    pididx_list.append(
+                        torch.full((pfeats.size(0),), bi, dtype=torch.long)
+                    )
+                if feats_list:
+                    fusion_full = torch.cat(
+                        [
+                            F.normalize(batch_embs[:, i], p=2, dim=-1)
+                            for i in range(n_modalities)
+                        ],
+                        dim=-1,
+                    )
+                    _, emb_full = model.forward_with_embedding(fusion_full)
+                    bcf = torch.cat(feats_list, dim=0).to(device)
+                    bcl = torch.cat(labels_list, dim=0).to(device)
+                    bci = torch.cat(pididx_list, dim=0).to(device)
+                    cdt_per_row = emb_full[bci]  # [total, 128]
+                    choice_in = torch.cat([cdt_per_row, bcf], dim=1)  # [total, 136]
+                    choice_logits = model.choice_head(choice_in).squeeze(-1)
+                    choice_loss = F.binary_cross_entropy_with_logits(choice_logits, bcl)
+
+            loss = (
+                ce_loss
+                + lambda_contrastive * nt_loss
+                + temporal_weight * temp_loss
+                + LAMBDA_CHOICE_FUSION * choice_loss
+            )
 
             optimizer.zero_grad()
             loss.backward()
@@ -883,11 +1014,13 @@ def train(
             epoch_ce += ce_loss.item()
             epoch_nt += nt_loss.item()
             epoch_temp += temp_loss.item()
+            epoch_choice += choice_loss.item()
             n_batches += 1
 
         avg_ce = epoch_ce / n_batches
         avg_nt = epoch_nt / n_batches
         avg_temp = epoch_temp / n_batches
+        avg_choice = epoch_choice / n_batches
 
         # Validation
         model.eval()
@@ -918,6 +1051,7 @@ def train(
         print(
             f"Epoch {epoch + 1}/{n_epochs}: "
             f"ce={avg_ce:.4f}  nt={avg_nt:.4f}  temp={avg_temp:.4f}  "
+            f"choice={avg_choice:.4f}  "
             f"val_loss={avg_val_loss:.4f}  val_acc={val_acc:.4f}"
         )
 
@@ -927,6 +1061,7 @@ def train(
                     "train_ce_loss": avg_ce,
                     "train_nt_loss": avg_nt,
                     "train_temp_loss": avg_temp,
+                    "train_choice_loss": avg_choice,
                     "val_loss": avg_val_loss,
                     "val_acc": val_acc,
                 },

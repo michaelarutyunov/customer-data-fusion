@@ -46,6 +46,90 @@ TRAIN_FRACTION: float = 0.8
 DATA_DIR = Path("data/synthetic")
 TRACES_PATH = DATA_DIR / "traces.jsonl"
 TRIALS_PATH = DATA_DIR / "trials.jsonl"
+CHOICE_SETS_PATH = DATA_DIR / "choice_sets.jsonl"
+PRODUCTS_PATH = DATA_DIR / "products.jsonl"
+
+# bead b8b: auxiliary choice-prediction loss weight (pinned, declared).
+LAMBDA_CHOICE: float = 0.5
+
+
+# §0.1 brand_tier ordinal — inlined here (encoders must not import generator or
+# applications) to mirror generator.choice_model / applications.choice.data.
+_BRAND_TIER_LEVEL: dict[str, float] = {
+    "premium": 1.0,
+    "mid": 0.66,
+    "value": 0.33,
+    "own_label": 0.0,
+}
+
+
+def _product_features(product: dict) -> Tensor:
+    """§0.1 board encoding of a catalogue product → 8-dim float tensor."""
+    feats = [
+        float(product["price_normalised"]),
+        _BRAND_TIER_LEVEL[product["brand_tier"]],
+        float(product["quality_score"]),
+        float(product["warranty_score"]),
+        float(product["rating"]) / 5.0,
+        float(product["features_score"]),
+        1.0 if product["availability"] else 0.0,
+        float(product["design_score"]),
+    ]
+    return torch.tensor(feats, dtype=torch.float)
+
+
+def load_choice_data(
+    choice_sets_path: Path = CHOICE_SETS_PATH,
+    products_path: Path = PRODUCTS_PATH,
+) -> tuple[dict[str, dict], dict[str, dict]]:
+    """Load choice_sets.jsonl (keyed by choice_set_id) + products.jsonl (by product_id)."""
+    choice_sets: dict[str, dict] = {}
+    with open(choice_sets_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            cs = json.loads(line)
+            choice_sets[cs["choice_set_id"]] = cs
+
+    products: dict[str, dict] = {}
+    with open(products_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            product = json.loads(line)
+            products[product["product_id"]] = product
+    return choice_sets, products
+
+
+def _trial_choice_tensors(
+    trial_id: str,
+    choice_sets: dict[str, dict],
+    products: dict[str, dict],
+) -> tuple[Tensor, Tensor] | None:
+    """Build (slot_features [n_slots, 8], chosen_labels [n_slots]) for a trial.
+
+    Returns None if the trial has no matching ChoiceSet (choice loss is skipped
+    for that trial; strategy-CE / NT-Xent still apply).
+    """
+    cs = choice_sets.get(trial_id)
+    if cs is None:
+        return None
+    alt_products = cs.get("alternative_products", {})
+    chosen = cs.get("chosen_alternative")
+    feats: list[Tensor] = []
+    labels: list[float] = []
+    for slot, product_id in alt_products.items():
+        product = products.get(product_id)
+        if product is None:
+            continue
+        feats.append(_product_features(product))
+        labels.append(1.0 if slot == chosen else 0.0)
+    if not feats:
+        return None
+    return torch.stack(feats), torch.tensor(labels, dtype=torch.float)
+
 
 
 # ---------------------------------------------------------------------------
@@ -67,24 +151,32 @@ class TraceDataset(Dataset):
         persona_ids: list[str],
         trial_ids: list[str],
         participant_ids: list[str],
+        choice_feats: list[Tensor | None] | None = None,
+        choice_labels: list[Tensor | None] | None = None,
     ) -> None:
         self.tokens_list = tokens_list
         self.persona_labels = persona_labels
         self.persona_ids = persona_ids
         self.trial_ids = trial_ids
         self.participant_ids = participant_ids
+        self.choice_feats = choice_feats or []
+        self.choice_labels = choice_labels or []
 
     def __len__(self) -> int:
         return len(self.tokens_list)
 
-    def __getitem__(self, idx: int) -> tuple[Tensor, Tensor, int, str, str]:
+    def __getitem__(self, idx: int):
         tokens, mask = self.tokens_list[idx]
+        cf = self.choice_feats[idx] if idx < len(self.choice_feats) else None
+        cl = self.choice_labels[idx] if idx < len(self.choice_labels) else None
         return (
             tokens,
             mask,
             self.persona_labels[idx],
             self.persona_ids[idx],
             self.participant_ids[idx],
+            cf,
+            cl,
         )
 
 
@@ -398,9 +490,15 @@ def build_dataset(
     trials: dict[str, TrialRecord],
     persona_to_label: dict[str, int] | None = None,
     vocab: dict[str, dict[str, int]] | None = None,
+    choice_sets: dict[str, dict] | None = None,
+    products: dict[str, dict] | None = None,
 ) -> tuple[TraceDataset, dict[str, int]]:
     """
     Tokenise all trials and build a TraceDataset.
+
+    If ``choice_sets`` and ``products`` are provided (bead b8b), each trial is
+    also attached to its ChoiceSet's per-slot product features + chosen labels
+    for the auxiliary choice-prediction loss.
 
     Returns (dataset, persona_to_label_map).
     """
@@ -429,6 +527,8 @@ def build_dataset(
     persona_ids: list[str] = []
     trial_ids: list[str] = []
     participant_ids: list[str] = []
+    choice_feats: list[Tensor | None] = []
+    choice_labels: list[Tensor | None] = []
 
     for tid, trial in trials.items():
         trial_events = events_by_trial.get(tid, [])
@@ -438,9 +538,24 @@ def build_dataset(
         persona_ids.append(trial.persona_id)
         trial_ids.append(trial.trial_id)
         participant_ids.append(trial.participant_id)
+        if choice_sets is not None and products is not None:
+            ct = _trial_choice_tensors(trial.trial_id, choice_sets, products)
+            if ct is None:
+                choice_feats.append(None)
+                choice_labels.append(None)
+            else:
+                cf, cl = ct
+                choice_feats.append(cf)
+                choice_labels.append(cl)
 
     dataset = TraceDataset(
-        tokens_list, persona_labels, persona_ids, trial_ids, participant_ids
+        tokens_list,
+        persona_labels,
+        persona_ids,
+        trial_ids,
+        participant_ids,
+        choice_feats,
+        choice_labels,
     )
     return dataset, persona_to_label
 
@@ -450,17 +565,47 @@ def build_dataset(
 # ---------------------------------------------------------------------------
 
 
-def collate_fn(
-    batch: list[tuple[Tensor, Tensor, int, str, str]],
-) -> tuple[Tensor, Tensor, Tensor, list[str], list[str]]:
-    """Collate a batch of (tokens, mask, label, persona_id, participant_id) tuples."""
-    tokens_masks = [(t, m) for t, m, _, _, _ in batch]
-    labels = torch.tensor([lbl for _, _, lbl, _, _ in batch], dtype=torch.long)
-    persona_ids = [p for _, _, _, p, _ in batch]
-    participant_ids = [pid for _, _, _, _, pid in batch]
+def collate_fn(batch):
+    """Collate a batch of (tokens, mask, label, persona_id, participant_id, choice_feats, choice_labels).
+
+    Returns padded tokens/mask + labels + ids + flattened choice tensors
+    (batch_choice_feats [total_slots, 8], batch_choice_labels [total_slots],
+    batch_choice_trial_idx [total_slots] mapping each slot to its batch row).
+    """
+    tokens_masks = [(t, m) for t, m, *_ in batch]
+    labels = torch.tensor([item[2] for item in batch], dtype=torch.long)
+    persona_ids = [item[3] for item in batch]
+    participant_ids = [item[4] for item in batch]
+
+    # Flatten per-trial choice tensors across the batch (bead b8b).
+    feats_list, labels_list, trial_idx_list = [], [], []
+    for i, item in enumerate(batch):
+        cf, cl = item[5], item[6]
+        if cf is None or cl is None or cf.numel() == 0:
+            continue
+        feats_list.append(cf)
+        labels_list.append(cl)
+        trial_idx_list.append(torch.full((cf.size(0),), i, dtype=torch.long))
+    if feats_list:
+        batch_choice_feats = torch.cat(feats_list, dim=0)
+        batch_choice_labels = torch.cat(labels_list, dim=0)
+        batch_choice_trial_idx = torch.cat(trial_idx_list, dim=0)
+    else:
+        batch_choice_feats = torch.empty((0, 8), dtype=torch.float)
+        batch_choice_labels = torch.empty((0,), dtype=torch.float)
+        batch_choice_trial_idx = torch.empty((0,), dtype=torch.long)
 
     padded_tokens, padded_mask = collate_batch(tokens_masks)
-    return padded_tokens, padded_mask, labels, persona_ids, participant_ids
+    return (
+        padded_tokens,
+        padded_mask,
+        labels,
+        persona_ids,
+        participant_ids,
+        batch_choice_feats,
+        batch_choice_labels,
+        batch_choice_trial_idx,
+    )
 
 
 def train(
@@ -536,10 +681,21 @@ def train(
     # Build vocab from ALL events so both train and val use the same mapping
     vocab = build_vocab(events, cache_path=DATA_DIR / "trace_vocab.json")
 
+    # bead b8b: load choice sets + products for the auxiliary choice loss.
+    # Skipped (None) if the files are absent — e.g. in tests without data.
+    try:
+        choice_sets, products = load_choice_data()
+        logger.info("Loaded %d choice sets for auxiliary choice loss", len(choice_sets))
+    except FileNotFoundError:
+        choice_sets, products = None, None
+        logger.warning("choice_sets.jsonl not found — auxiliary choice loss disabled")
+
     train_dataset, _ = build_dataset(
-        train_events, train_trials, persona_to_label, vocab
+        train_events, train_trials, persona_to_label, vocab, choice_sets, products
     )
-    val_dataset, _ = build_dataset(val_events, val_trials, persona_to_label, vocab)
+    val_dataset, _ = build_dataset(
+        val_events, val_trials, persona_to_label, vocab, choice_sets, products
+    )
 
     n_classes = len(persona_to_label)
     logger.info("Personas: %d classes: %s", n_classes, persona_to_label)
@@ -595,7 +751,8 @@ def train(
             "n_classes": n_classes,
             "train_samples": len(train_dataset),
             "val_samples": len(val_dataset),
-            "objective": "ce+nt_xent_split_view",
+            "objective": "ce+nt_xent+choice_b8b",
+            "lambda_choice": LAMBDA_CHOICE,
             "lambda_contrastive": lambda_contrastive,
             "nt_xent_temperature": nt_xent_temperature,
         }
@@ -615,7 +772,10 @@ def train(
         epoch_nt_loss = 0.0
         n_batches = 0
 
-        for tokens, mask, labels, _, participant_ids_batch in train_loader:
+        for batch in train_loader:
+            tokens, mask, labels = batch[0], batch[1], batch[2]
+            participant_ids_batch = batch[4]
+            ch_feats, ch_labels, ch_trial_idx = batch[5], batch[6], batch[7]
             tokens = tokens.to(device)
             mask = mask.to(device)
             labels = labels.to(device)
@@ -651,7 +811,22 @@ def train(
             else:
                 nt_loss = torch.tensor(0.0, device=device)
 
-            loss = cls_loss + lambda_contrastive * nt_loss
+            # bead b8b: auxiliary choice-prediction loss. For each (trial, slot)
+            # row, predict P(chosen) from concat(trial_emb, 8-dim product vector).
+            if ch_feats.numel() > 0:
+                ch_feats = ch_feats.to(device)
+                ch_labels = ch_labels.to(device)
+                ch_trial_idx = ch_trial_idx.to(device)
+                slot_trial_embs = trial_embs[ch_trial_idx]  # (total_slots, 128)
+                choice_in = torch.cat([slot_trial_embs, ch_feats], dim=1)
+                choice_logits = encoder.choice_head(choice_in).squeeze(-1)
+                choice_loss = F.binary_cross_entropy_with_logits(
+                    choice_logits, ch_labels
+                )
+            else:
+                choice_loss = torch.tensor(0.0, device=device)
+
+            loss = cls_loss + lambda_contrastive * nt_loss + LAMBDA_CHOICE * choice_loss
             loss.backward()
             optimizer.step()
 
@@ -669,7 +844,8 @@ def train(
         val_total = 0
 
         with torch.no_grad():
-            for tokens, mask, labels, _, _ in val_loader:
+            for batch in val_loader:
+                tokens, mask, labels = batch[0], batch[1], batch[2]
                 tokens = tokens.to(device)
                 mask = mask.to(device)
                 labels = labels.to(device)
@@ -714,7 +890,7 @@ def train(
             backbone_state = {
                 k: v
                 for k, v in encoder.state_dict().items()
-                if not k.startswith("classifier")
+                if not k.startswith("classifier") and not k.startswith("choice_head")
             }
             torch.save(backbone_state, _save_path)
             logger.info("Saved best model to %s", _save_path)
